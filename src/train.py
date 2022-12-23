@@ -142,7 +142,7 @@ def write_to_tensorboard(writer, t_losses, v_losses, epoch):
     writer.scalar('KL prescale (validation)', v_losses['kl_prescale'].mean(), epoch)
     writer.flush()
 
-def optimise_VAE(init_params, x0, model, train_dataset, validate_dataset, cfg, key, ckpt_dir, writer):
+def optimise_model(init_params, x0, model, train_dataset, validate_dataset, cfg, key, ckpt_dir, writer):
 
     kl_schedule = kl_scheduler(cfg)
     
