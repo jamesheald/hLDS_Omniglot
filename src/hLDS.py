@@ -11,7 +11,7 @@ class encoder(nn.Module):
     @nn.compact
     def __call__(self, x):
         
-        # CNN based on End-to-End Training of Deep Visuomotor Policies
+        # CNN architecture based on 'End-to-End Training of Deep Visuomotor Policies' paper
         x = nn.Conv(features = 64, kernel_size = (7, 7))(x)
         x = nn.relu(x)
         x = nn.Conv(features = 32, kernel_size = (5, 5))(x)
@@ -55,14 +55,36 @@ class sampler(nn.Module):
         return nn.activation.softmax(z1 / params['t'][0], axis = 1), np.squeeze(z2)
 
 class decoder(nn.Module):
+    x_dim: list
+    image_dim: list
     T: int
-    x_pixels: int
-    y_pixels: int
-    image_dim: float
     dt: float
 
-    @nn.compact
-    def __call__(self, params, A, x0, z1, z2):        
+    def setup(self):
+
+        def initialise_LDS_states():
+              
+            # initialise states to zero
+            # the initial state of the top layer will be inferred later by the encoder and so is not set here
+            n_layers = len(self.x_dim)
+            x0 = []
+            for layer in range(1, n_layers):
+                
+                x0.append(np.zeros(self.x_dim[layer]))
+
+            return x0
+
+        # initialise the states (not learned) of the LDS in the decoder
+        self.x0 = initialise_LDS_states()
+
+        # set the x- and y- locations of the gaussian kernels that tile the image space in a grid
+        self.grid_x_locations = np.linspace(0.5, self.image_dim[1] - 0.5, self.image_dim[1])
+        self.grid_y_locations = np.linspace(0.5, self.image_dim[0] - 0.5, self.image_dim[0])
+
+        # transform list of image dimensions to an array
+        self.image_dimensions = np.array(self.image_dim)
+
+    def __call__(self, params, A, z1, z2):
 
         def decode_one_step(carry, inputs):
             
@@ -92,8 +114,8 @@ class decoder(nn.Module):
 
                     return -0.5 * (x - mu)**2 / np.exp(log_var)
 
-                ll_p_x = log_Gaussian_kernel(pen_xy[0], self.x_pixels, params['pen_log_var'])
-                ll_p_y = log_Gaussian_kernel(pen_xy[1], self.y_pixels, params['pen_log_var'])
+                ll_p_x = log_Gaussian_kernel(pen_xy[0], self.grid_x_locations, params['pen_log_var'])
+                ll_p_y = log_Gaussian_kernel(pen_xy[1], self.grid_y_locations, params['pen_log_var'])
 
                 p_xy_t = np.exp(ll_p_x[None,:] + ll_p_y[:,None] + pen_down_log_p)
 
@@ -105,16 +127,16 @@ class decoder(nn.Module):
                 pen_xy = pen_xy + d_xy
 
                 # align pen position relative to centre of canvas
-                pen_xy = pen_xy - self.image_dim / 2
+                pen_xy = pen_xy - self.image_dimensions / 2
 
                 # transform canvas boundaries to -/+ 5
-                pen_xy = pen_xy * 2 / self.image_dim * 5
+                pen_xy = pen_xy * 2 / self.image_dimensions * 5
 
                 # squash pen position to be within canvas boundaries
                 pen_xy = nn.sigmoid(pen_xy)
 
                 # transform canvas boundaries back to their original values
-                pen_xy_new = pen_xy * self.image_dim
+                pen_xy_new = pen_xy * self.image_dimensions
 
                 return pen_xy_new
 
@@ -142,7 +164,7 @@ class decoder(nn.Module):
             # pen velocities in x and y directions
             d_xy = pen_actions[:2]
 
-            # log probability that the pen is down (actively drawing)
+            # log probability that the pen is down (drawing is taking place)
             pen_down_log_p = nn.log_sigmoid(pen_actions[2])
 
             # calculate the per-pixel bernoulli parameter
@@ -156,9 +178,12 @@ class decoder(nn.Module):
 
             return carry, outputs
 
-        x0[0] = z2[:]
+        x0 = list(self.x0)
 
-        pen_xy0 = self.image_dim / 2 # initialise pen in centre of canvas
+        # prepend the inferred initial state of the top layer to the list of initial states
+        x0.insert(0, z2[:])
+
+        pen_xy0 = self.image_dimensions / 2 # initialise pen in centre of canvas
 
         carry = x0, pen_xy0
         inputs = np.repeat(z1[None,:], self.T, axis = 0)
@@ -175,23 +200,21 @@ class decoder(nn.Module):
 
 class VAE(nn.Module):
     n_loops_top_layer: int
-    x_dim_top_layer: int
+    x_dim: list
+    image_dim: list
     T: int
-    x_pixels: int
-    y_pixels: int
-    image_dim: float
-    dt: list
+    dt: float
 
     def setup(self):
         
-        self.encoder = encoder(self.n_loops_top_layer, self.x_dim_top_layer)
+        self.encoder = encoder(self.n_loops_top_layer, self.x_dim[0])
         self.sampler = sampler(self.n_loops_top_layer)
-        self.decoder = decoder(self.T, self.x_pixels, self.y_pixels, self.image_dim, self.dt)
+        self.decoder = decoder(self.x_dim, self.image_dim, self.T, self.dt)
 
-    def __call__(self, data, params, key, A, x0):
-        
+    def __call__(self, data, params, A, key):
+
         output_encoder = self.encoder(data[None,:,:,None])
         z1, z2 = self.sampler(output_encoder, params, key)
-        output_decoder = self.decoder(params, A, x0, z1, z2)
+        output_decoder = self.decoder(params, A, z1, z2)
         
         return output_encoder | output_decoder

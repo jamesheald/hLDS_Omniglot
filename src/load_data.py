@@ -21,11 +21,11 @@ def transform_dataset(dataset, batch_size, tfds_seed):
     
     dataset = dataset.cache()
     dataset = dataset.shuffle(tf.data.experimental.cardinality(dataset).numpy(), seed = tfds_seed, reshuffle_each_iteration = True)
-    dataset = dataset.batch(batch_size, drop_remainder = True)
+    dataset = dataset.batch(batch_size, drop_remainder = True).prefetch(1)
     
     return dataset
 
-def create_data_splits(cfg):
+def create_data_split(cfg):
 
     (full_train_set, test_dataset), ds_info = \
     tfds.load('Omniglot', split = ['train', 'test'], shuffle_files = True, as_supervised = False, with_info = True)
