@@ -11,7 +11,7 @@ def get_hyperparameter_configuration():
     cfg.dt = 0.01
     cfg.time_steps = 100
     cfg.init_pen_log_var = 10.0
-    cfg.image_dim = np.array((105, 105))
+    cfg.image_dim = [105, 105]
     cfg.prior_z_log_var = np.log(0.1)
     cfg.jax_seed = 0
 

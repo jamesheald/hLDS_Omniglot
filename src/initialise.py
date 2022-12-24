@@ -105,18 +105,6 @@ def construct_dynamics_matrix(params):
 
     return A
 
-def initialise_LDS_states(cfg):
-              
-    # initialise the states of the LDS in the decoder to zero (not learned)
-    # the state of the top layer will be inferred later by the encoder and so the value here will be overwritten
-    n_layers = len(cfg.x_dim)
-    init_states = []
-    for layer in range(n_layers):
-        
-        init_states.append(np.zeros(cfg.x_dim[layer]))
-
-    return init_states
-
 def initialise_model(cfg, train_dataset):
 
     # explicitly generate a PRNG key
@@ -127,25 +115,19 @@ def initialise_model(cfg, train_dataset):
 
     cfg.n_batches = len(train_dataset)
     cfg.n_loops = [int(np.ceil(i * cfg.alpha_fraction)) for i in cfg.x_dim]
-    cfg.x_pixels = np.linspace(0.5, cfg.image_dim[1] - 0.5, cfg.image_dim[1])
-    cfg.y_pixels = np.linspace(0.5, cfg.image_dim[0] - 0.5, cfg.image_dim[0])
 
     # define the model
-    model = VAE(n_loops_top_layer = cfg.n_loops[0], x_dim_top_layer = cfg.x_dim[0], T = cfg.time_steps,
-                x_pixels = cfg.x_pixels, y_pixels = cfg.y_pixels, image_dim = cfg.image_dim, dt = cfg.dt)
-    
-    # initialise LDS states
-    x0 = initialise_LDS_states(cfg)
+    model = VAE(n_loops_top_layer = cfg.n_loops[0], x_dim = cfg.x_dim, image_dim = cfg.image_dim, T = cfg.time_steps, dt = cfg.dt)
     
     # initialise the model parameters
     params = {'prior_z_log_var': cfg.prior_z_log_var,
               'decoder': initialise_decoder_parameters(cfg, next(subkeys))}
-    init_params = model.init(data = np.ones((1, cfg.image_dim[0], cfg.image_dim[1], 1)), params = params['decoder'], key = next(subkeys), 
-                             A = construct_dynamics_matrix(params['decoder']), x0 = x0, rngs = {'params': random.PRNGKey(0)})['params']
+    init_params = model.init(data = np.ones((1, cfg.image_dim[0], cfg.image_dim[1], 1)), params = params['decoder'], A = construct_dynamics_matrix(params['decoder']),
+                             key = next(subkeys), rngs = {'params': random.PRNGKey(0)})['params']
 
     # concatenate all params into a single dictionary
     init_params = unfreeze(init_params)
     init_params = init_params | params
     init_params = freeze(init_params)
 
-    return model, init_params, x0, key, cfg
+    return model, init_params, cfg, key

@@ -25,21 +25,21 @@ def create_train_state(model, init_params, cfg):
     
     lr_scheduler = optax.exponential_decay(cfg.step_size, cfg.decay_steps, cfg.decay_factor)
 
-    optimiser = optax.chain(optax.adamw(learning_rate = lr_scheduler, b1 = cfg.adam_b1, b2 = cfg.adam_b2, eps = cfg.adam_eps, weight_decay = cfg.weight_decay), 
-                            optax.clip_by_global_norm(cfg.max_grad_norm))
+    optimiser = optax.chain(optax.adamw(learning_rate = lr_scheduler, b1 = cfg.adam_b1, b2 = cfg.adam_b2, eps = cfg.adam_eps, 
+                            weight_decay = cfg.weight_decay), optax.clip_by_global_norm(cfg.max_grad_norm))
     
     state = train_state.TrainState.create(apply_fn = model.apply, params = init_params, tx = optimiser)
 
     return state, lr_scheduler
 
-def apply_model(state, data, key, A, x0):
+def apply_model(state, data, A, key):
 
-    return state.apply_fn({'params': {'encoder': state.params['encoder']}}, data, state.params['decoder'], key, A, x0)
-    # return state.apply_fn({'params': state.params}, data, state.params['decoder'], key, A, x0)
+    return state.apply_fn({'params': {'encoder': state.params['encoder']}}, data, state.params['decoder'], A, key)
+    # return state.apply_fn({'params': state.params}, data, state.params['decoder'], A, key)
 
-batch_apply_model = vmap(apply_model, in_axes = (None, 0, 0, None, None))
+batch_apply_model = vmap(apply_model, in_axes = (None, 0, None, 0))
     
-def loss_fn(params, state, data, x0, kl_weight, key):
+def loss_fn(params, state, data, kl_weight, key):
 
     def cross_entropy_loss(p_xy_t, data):
     
@@ -70,17 +70,20 @@ def loss_fn(params, state, data, x0, kl_weight, key):
     batch_cross_entropy_loss = vmap(cross_entropy_loss, in_axes = (0, 0))
     batch_KL_diagonal_Gaussians = vmap(KL_diagonal_Gaussians, in_axes = (None, None, 0, 0))
 
+    # construct the dynamics of each loop from the parameters
     A = construct_dynamics_matrix(params['decoder'])
     
-    # apply the model
+    # create a subkey for each example in the batch
     batch_size = data.shape[0]
     subkeys = random.split(key, batch_size)
-    output = batch_apply_model(state, data, subkeys, A, x0)
 
-    # calculate cross entropy
+    # apply the model
+    output = batch_apply_model(state, data, A, subkeys)
+
+    # calculate the cross entropy
     cross_entropy = batch_cross_entropy_loss(output['p_xy_t'], data).mean()
 
-    # calculate KL divergence between the approximate posterior and prior over the latents
+    # calculate the KL divergence between the approximate posterior and prior over the latents
     mu_0 = 0
     log_var_0 = params['prior_z_log_var']
     mu_1 = output['z_mean']
@@ -88,18 +91,16 @@ def loss_fn(params, state, data, x0, kl_weight, key):
     kl_loss_prescale = batch_KL_diagonal_Gaussians(mu_0, log_var_0, mu_1, log_var_1).mean()
     kl_loss = kl_weight * kl_loss_prescale
 
-    loss = cross_entropy + kl_loss
+    all_losses = {'cross_entropy': cross_entropy, 'kl': kl_loss, 'kl_prescale': kl_loss_prescale, 'total': cross_entropy + kl_loss}
 
-    all_losses = {'total': loss, 'cross_entropy': cross_entropy, 'kl': kl_loss, 'kl_prescale': kl_loss_prescale}
-
-    return loss, all_losses
+    return all_losses['total'], all_losses
 
 loss_grad = value_and_grad(loss_fn, has_aux = True)
 eval_step_jit = jit(loss_fn)
 
-def train_step(state, training_data, x0, kl_weight, key):
+def train_step(state, training_data, kl_weight, key):
     
-    (loss, all_losses), grads = loss_grad(state.params, state, training_data, x0, kl_weight, key)
+    (loss, all_losses), grads = loss_grad(state.params, state, training_data, kl_weight, key)
 
     state = state.apply_gradients(grads = grads)
     
@@ -142,10 +143,12 @@ def write_to_tensorboard(writer, t_losses, v_losses, epoch):
     writer.scalar('KL prescale (validation)', v_losses['kl_prescale'].mean(), epoch)
     writer.flush()
 
-def optimise_model(init_params, x0, model, train_dataset, validate_dataset, cfg, key, ckpt_dir, writer):
+def optimise_model(model, init_params, train_dataset, validate_dataset, cfg, key, ckpt_dir, writer):
 
+    # create schedule for KL divergence weight
     kl_schedule = kl_scheduler(cfg)
     
+    # create train state
     state, lr_scheduler = create_train_state(model, init_params, cfg)
     
     # set early stopping criteria
@@ -175,7 +178,7 @@ def optimise_model(init_params, x0, model, train_dataset, validate_dataset, cfg,
 
             kl_weight = np.array(next(kl_schedule))
 
-            state, loss, all_losses = train_step_jit(state, np.array(next(train_datagen)['image']), x0, kl_weight, next(training_subkeys))
+            state, loss, all_losses = train_step_jit(state, np.array(next(train_datagen)['image']), kl_weight, next(training_subkeys))
 
             # training losses (average of 'print_every' batches)
             training_losses = tree_map(lambda x, y: x + y / cfg.print_every, training_losses, all_losses)
@@ -183,15 +186,15 @@ def optimise_model(init_params, x0, model, train_dataset, validate_dataset, cfg,
             if batch % cfg.print_every == 0:
 
                 # calculate loss on validation data
-                # _, validation_losses = eval_step_jit(state.params, state, validate_dataset, x0, kl_weight, next(validation_subkeys))
+                # _, validation_losses = eval_step_jit(state.params, state, validate_dataset, kl_weight, next(validation_subkeys))
                 validation_losses = training_losses
                     
                 # end batches timer
                 batches_duration = time.time() - batch_start_time
 
                 # print metrics
-                print_metrics("batch", batches_duration, training_losses, training_losses, 
-                              batch_range = [batch - cfg.print_every + 1, batch], lr = lr_scheduler(batch - 1 + epoch * cfg.n_batches))
+                print_metrics("batch", batches_duration, training_losses, training_losses, batch_range = [batch - cfg.print_every + 1, batch], 
+                              lr = lr_scheduler(batch - 1 + epoch * cfg.n_batches))
 
                 # store losses
                 if batch == cfg.print_every:
