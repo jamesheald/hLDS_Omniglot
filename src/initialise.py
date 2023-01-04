@@ -126,7 +126,7 @@ def initialise_model(cfg, train_dataset):
     init_params = model.init(data = np.ones((1, cfg.image_dim[0], cfg.image_dim[1], 1)), params = params['decoder'], A = construct_dynamics_matrix(params['decoder']),
                              key = next(subkeys), rngs = {'params': random.PRNGKey(0)})['params']
 
-    # concatenate all params into a single dictionary
+    # concatenate all parameters into a single dictionary
     init_params = unfreeze(init_params)
     init_params = init_params | params
     init_params = freeze(init_params)

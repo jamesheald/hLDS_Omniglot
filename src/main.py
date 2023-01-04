@@ -21,7 +21,10 @@ writer, ckpt_dir = setup_tensorboard_and_checkpoints(folder_name)
 # type help at a breakpoint() to see available commands
 # use xeus-python kernel -- Python 3.9 (XPython) -- for debugging
 
+# import jax
+# jax.profiler.start_trace('runs/' + folder_name)
 state, losses = optimise_model(model, init_params, train_dataset, validate_dataset, cfg, key, ckpt_dir, writer)
+# jax.profiler.stop_trace()
 
 print("Optimisation complete.")
 
