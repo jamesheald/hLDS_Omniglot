@@ -153,12 +153,12 @@ class decoder(nn.Module):
             pen_xy_new = update_pen_position(pen_xy, d_xy)
 
             carry = x_new, pen_xy_new
-            outputs = alphas, x_new, pen_xy_new, p_xy, pen_down_log_p # could add inputs here
+            outputs = alphas, u, x_new, pen_xy_new, p_xy, pen_down_log_p
 
             return carry, outputs
 
         # initial LDS states
-        # state of top layer is inferred by the encoder, states of other layers are set to 0
+        # state of top layer is inferred by the encoder, states of lower layers are set to 0
         n_layers = len(self.x_dim)
         x0 = [z2[:], *[np.zeros(self.x_dim[layer]) for layer in range(1, n_layers)]]
 
@@ -168,9 +168,10 @@ class decoder(nn.Module):
         carry = x0, pen_xy0
         inputs = np.repeat(z1[None,:], self.T, axis = 0)
 
-        _, (alphas, x, pen_xy, p_xy_t, pen_down_log_p) = lax.scan(decode_one_step, carry, inputs)
+        _, (alphas, u, x, pen_xy, p_xy_t, pen_down_log_p) = lax.scan(decode_one_step, carry, inputs)
     
         return {'alphas': alphas,
+                'u': u,
                 'x0': x0,
                 'x': x,
                 'pen_xy0': pen_xy0,
