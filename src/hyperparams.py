@@ -12,13 +12,17 @@ def get_hyperparameter_configuration():
     cfg.time_steps = 100
     cfg.init_pen_log_var = 10.0
     cfg.image_dim = [105, 105]
-    cfg.prior_z_log_var = np.log(0.1)
+    cfg.prior_z_log_var = -2.0
     cfg.jax_seed = 0
 
     # data
-    cfg.validation_split = 0.2
-    cfg.batch_size = 5
+    cfg.percent_data_to_use = 1
+    cfg.fraction_for_validation = 0.2
+    cfg.batch_size = 32
     cfg.tfds_seed = 0
+
+    # images to write to tensorboard
+    cfg.square_image_grid_size = 6
 
     # optimisation
     cfg.kl_warmup_start = 500
@@ -34,8 +38,8 @@ def get_hyperparameter_configuration():
     cfg.decay_steps = 1
     cfg.decay_factor = 0.9999
     cfg.print_every = 1
-    cfg.n_epochs = 10
+    cfg.n_epochs = 1
     cfg.min_delta = 1e-3
-    cfg.patience = 2
+    cfg.patience = 20
 
     return cfg

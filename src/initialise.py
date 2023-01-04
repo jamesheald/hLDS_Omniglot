@@ -4,6 +4,7 @@ from jax.tree_util import tree_map
 from utils import keyGen
 from hLDS import VAE
 from flax.core.frozen_dict import freeze, unfreeze
+from flax.metrics import tensorboard
 
 def initialise_decoder_parameters(cfg, key):
     
@@ -131,3 +132,11 @@ def initialise_model(cfg, train_dataset):
     init_params = freeze(init_params)
 
     return model, init_params, cfg, key
+
+def setup_tensorboard_and_checkpoints(folder_name):
+
+    writer = tensorboard.SummaryWriter('runs/' + folder_name) # to view tensorboard results, call 'tensorboard --logdir=.' in runs folder (not in python)
+
+    ckpt_dir = 'tmp/flax-checkpointing/' + folder_name
+
+    return writer, ckpt_dir

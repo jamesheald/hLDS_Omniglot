@@ -183,7 +183,8 @@ class decoder(nn.Module):
         # prepend the inferred initial state of the top layer to the list of initial states
         x0.insert(0, z2[:])
 
-        pen_xy0 = self.image_dimensions / 2 # initialise pen in centre of canvas
+        # initialise pen in centre of canvas
+        pen_xy0 = self.image_dimensions / 2
 
         carry = x0, pen_xy0
         inputs = np.repeat(z1[None,:], self.T, axis = 0)

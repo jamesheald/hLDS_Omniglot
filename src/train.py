@@ -5,7 +5,7 @@ import optax
 from flax.training import checkpoints, train_state
 from flax.training.early_stopping import EarlyStopping
 import tensorflow_datasets as tfds
-from utils import keyGen, stabilise_variance, smooth_maximum
+from utils import keyGen, stabilise_variance, smooth_maximum, print_metrics, write_images_to_tensorboard, write_metrics_to_tensorboard
 from initialise import construct_dynamics_matrix
 import time
 from copy import copy
@@ -13,7 +13,7 @@ from copy import copy
 def kl_scheduler(cfg):
     
     kl_schedule = []
-    for i_batch in range(cfg.n_batches):
+    for i_batch in range(int(cfg.n_batches * cfg.n_epochs)):
         
         warm_up_fraction = min(max((i_batch - cfg.kl_warmup_start) / (cfg.kl_warmup_end - cfg.kl_warmup_start), 0), 1)
         
@@ -93,55 +93,20 @@ def loss_fn(params, state, data, kl_weight, key):
 
     all_losses = {'cross_entropy': cross_entropy, 'kl': kl_loss, 'kl_prescale': kl_loss_prescale, 'total': cross_entropy + kl_loss}
 
-    return all_losses['total'], all_losses
+    return all_losses['total'], (all_losses, output['pen_xy'], output['pen_down_log_p'])
 
 loss_grad = value_and_grad(loss_fn, has_aux = True)
 eval_step_jit = jit(loss_fn)
 
 def train_step(state, training_data, kl_weight, key):
     
-    (loss, all_losses), grads = loss_grad(state.params, state, training_data, kl_weight, key)
+    (loss, (all_losses, _, _)), grads = loss_grad(state.params, state, training_data, kl_weight, key)
 
     state = state.apply_gradients(grads = grads)
     
-    return state, loss, all_losses
+    return state, all_losses
 
 train_step_jit = jit(train_step)
-
-def print_metrics(phase, duration, t_losses, v_losses, batch_range = [], lr = [], epoch = []):
-    
-    if phase == "batch":
-        
-        s1 = '\033[1m' + "Batches {}-{} in {:.2f} seconds, learning rate: {:.5f}" + '\033[0m'
-        print(s1.format(batch_range[0], batch_range[1], duration, lr))
-        
-    elif phase == "epoch":
-        
-        s1 = '\033[1m' + "Epoch {} in {:.1f} minutes" + '\033[0m'
-        print(s1.format(epoch, duration / 60))
-        
-    s2 = """  Training losses {:.4f} = cross entropy {:.4f} + KL {:.4f} ({:.4f})"""
-    s3 = """  Validation losses {:.4f} = cross entropy {:.4f} + KL {:.4f} ({:.4f})"""
-    s3 = """  Validation losses {:.4f} = cross entropy {:.4f} + KL {:.4f} ({:.4f})"""
-    print(s2.format(t_losses['total'].mean(), t_losses['cross_entropy'].mean(),
-                    t_losses['kl'].mean(), t_losses['kl_prescale'].mean()))
-    print(s3.format(v_losses['total'].mean(), v_losses['cross_entropy'].mean(),
-                    v_losses['kl'].mean(), v_losses['kl_prescale'].mean()))
-    
-    if phase == "epoch":
-        print("""\n""")
-        
-def write_to_tensorboard(writer, t_losses, v_losses, epoch):
-
-    writer.scalar('loss (train)', t_losses['total'].mean(), epoch)
-    writer.scalar('cross entropy (train)', t_losses['cross_entropy'].mean(), epoch)
-    writer.scalar('KL (train)', t_losses['kl'].mean(), epoch)
-    writer.scalar('KL prescale (train)', t_losses['kl_prescale'].mean(), epoch)
-    writer.scalar('loss (validation)', v_losses['total'].mean(), epoch)
-    writer.scalar('cross entropy (validation)', v_losses['cross_entropy'].mean(), epoch)
-    writer.scalar('KL (validation)', v_losses['kl'].mean(), epoch)
-    writer.scalar('KL prescale (validation)', v_losses['kl_prescale'].mean(), epoch)
-    writer.flush()
 
 def optimise_model(model, init_params, train_dataset, validate_dataset, cfg, key, ckpt_dir, writer):
 
@@ -178,7 +143,7 @@ def optimise_model(model, init_params, train_dataset, validate_dataset, cfg, key
 
             kl_weight = np.array(next(kl_schedule))
 
-            state, loss, all_losses = train_step_jit(state, np.array(next(train_datagen)['image']), kl_weight, next(training_subkeys))
+            state, all_losses = train_step_jit(state, np.array(next(train_datagen)['image']), kl_weight, next(training_subkeys))
 
             # training losses (average of 'print_every' batches)
             training_losses = tree_map(lambda x, y: x + y / cfg.print_every, training_losses, all_losses)
@@ -186,9 +151,8 @@ def optimise_model(model, init_params, train_dataset, validate_dataset, cfg, key
             if batch % cfg.print_every == 0:
 
                 # calculate loss on validation data
-                # _, validation_losses = eval_step_jit(state.params, state, validate_dataset, kl_weight, next(validation_subkeys))
-                validation_losses = training_losses
-                    
+                _, (validation_losses, pen_xy, pen_down_log_p) = eval_step_jit(state.params, state, validate_dataset, kl_weight, next(validation_subkeys))
+
                 # end batches timer
                 batches_duration = time.time() - batch_start_time
 
@@ -211,7 +175,7 @@ def optimise_model(model, init_params, train_dataset, validate_dataset, cfg, key
                 training_losses = {'total': 0, 'cross_entropy': 0, 'kl': 0, 'kl_prescale': 0}
                 batch_start_time = time.time()
 
-        losses['epoch ' + str(epoch)] = {'t_losses' : t_losses_thru_training, 'v_losses' : v_losses_thru_training}
+        losses['epoch ' + str(epoch)] = {'t_losses': t_losses_thru_training, 'v_losses': v_losses_thru_training}
         
         # end epoch timer
         epoch_duration = time.time() - epoch_start_time
@@ -219,11 +183,14 @@ def optimise_model(model, init_params, train_dataset, validate_dataset, cfg, key
         # print losses (mean over all batches in epoch)
         print_metrics("epoch", epoch_duration, t_losses_thru_training, v_losses_thru_training, epoch = epoch + 1)
 
+        # write images to tensorboard
+        write_images_to_tensorboard(writer, pen_xy, pen_down_log_p, cfg, validate_dataset, epoch)
+
         # write metrics to tensorboard
-        write_to_tensorboard(writer, t_losses_thru_training, v_losses_thru_training, epoch)
+        write_metrics_to_tensorboard(writer, t_losses_thru_training, v_losses_thru_training, epoch)
         
         # save checkpoint
-        ckpt = {'train_state': state, 'losses': losses, 'cfg': cfg}
+        ckpt = {'train_state': state, 'losses': losses, 'cfg': dict(cfg)}
         checkpoints.save_checkpoint(ckpt_dir = ckpt_dir, target = ckpt, step = epoch)
         
         # if early stopping criteria met, break
