@@ -125,20 +125,26 @@ class decoder(nn.Module):
 
                 return pen_xy_new
 
-            x, pen_xy = carry
+            x0, x1, x2, pen_xy = carry
             top_layer_alphas = inputs
 
             # compute the alphas
-            alphas = [np.squeeze(top_layer_alphas), *tree_map(compute_alphas, params['W_a'], x[:2], params['b_a'], params['t'][1:])]
+            a0 = np.squeeze(top_layer_alphas)
+            a1 = compute_alphas(params['W_a'][0], x0, params['b_a'][0], params['t'][1])
+            a2 = compute_alphas(params['W_a'][1], x1, params['b_a'][1], params['t'][2])
 
             # compute the additive inputs
-            u = [np.zeros(x[0].shape), *tree_map(compute_inputs, params['W_u'], x[:2])]
+            u0 = np.zeros(x0.shape)
+            u1 = compute_inputs(params['W_u'][0], x0)
+            u2 = compute_inputs(params['W_u'][1], x1)
 
             # update the states
-            x_new = tree_map(update_state, A, x, alphas, u)
+            x0 = update_state(A[0], x0, a0, u0)
+            x1 = update_state(A[1], x1, a1, u1)
+            x2 = update_state(A[2], x2, a2, u2)
 
             # linear readout from the state at the bottom layer
-            pen_actions = compute_pen_actions(params['W_p'], x_new[-1], params['b_p'])
+            pen_actions = compute_pen_actions(params['W_p'], x2, params['b_p'])
 
             # pen velocities in x and y directions
             d_xy = pen_actions[:2]
@@ -152,26 +158,21 @@ class decoder(nn.Module):
             # update the pen position based on the pen velocity
             pen_xy_new = update_pen_position(pen_xy, d_xy)
 
-            carry = x_new, pen_xy_new
-            outputs = alphas, x_new, pen_xy_new, p_xy, pen_down_log_p # could add inputs here
+            carry = x0, x1, x2, pen_xy_new
+            outputs = (a0, a1, a2), (x0, x1, x2), pen_xy_new, p_xy, pen_down_log_p # could add inputs here
 
             return carry, outputs
-
-        # initial LDS states
-        # state of top layer is inferred by the encoder, states of other layers are set to 0
-        n_layers = len(self.x_dim)
-        x0 = [z2[:], *[np.zeros(self.x_dim[layer]) for layer in range(1, n_layers)]]
 
         # initialise pen in centre of canvas
         pen_xy0 = self.image_dimensions / 2
 
-        carry = x0, pen_xy0
+        carry = z2[:], np.zeros(self.x_dim[1]), np.zeros(self.x_dim[2]), pen_xy0
         inputs = np.repeat(z1[None,:], self.T, axis = 0)
 
         _, (alphas, x, pen_xy, p_xy_t, pen_down_log_p) = lax.scan(decode_one_step, carry, inputs)
     
         return {'alphas': alphas,
-                'x0': x0,
+                'x0': z2[:],
                 'x': x,
                 'pen_xy0': pen_xy0,
                 'pen_xy': pen_xy,

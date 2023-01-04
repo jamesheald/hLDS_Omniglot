@@ -26,8 +26,6 @@ writer, ckpt_dir = setup_tensorboard_and_checkpoints(folder_name)
 state, losses = optimise_model(model, init_params, train_dataset, validate_dataset, cfg, key, ckpt_dir, writer)
 # jax.profiler.stop_trace()
 
-print("Optimisation complete.")
-
 # # restore checkpoint
 # from flax.training import checkpoints, train_state
 # ckpt = {'train_state': state, 'losses': losses, 'cfg': dict(cfg)}

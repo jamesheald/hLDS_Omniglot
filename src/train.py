@@ -110,6 +110,9 @@ train_step_jit = jit(train_step)
 
 def optimise_model(model, init_params, train_dataset, validate_dataset, cfg, key, ckpt_dir, writer):
 
+    # start optimisation timer
+    optimisation_start_time = time.time()
+
     # create schedule for KL divergence weight
     kl_schedule = kl_scheduler(cfg)
     
@@ -200,5 +203,9 @@ def optimise_model(model, init_params, train_dataset, validate_dataset, cfg, key
             print('Early stopping criteria met, breaking...')
             
             break
+
+    optimisation_duration = time.time() - optimisation_start_time
+
+    print('Optimisation finished at {:.2f} hours.'.format(optimisation_duration / 60**2))
             
     return state, losses
