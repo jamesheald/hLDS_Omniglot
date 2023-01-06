@@ -16,7 +16,7 @@ def get_hyperparameter_configuration():
     cfg.jax_seed = 0
 
     # data
-    cfg.percent_data_to_use = 1
+    cfg.percent_data_to_use = 100
     cfg.fraction_for_validation = 0.2
     cfg.batch_size = 32
     cfg.tfds_seed = 0
@@ -38,7 +38,7 @@ def get_hyperparameter_configuration():
     cfg.decay_steps = 1
     cfg.decay_factor = 0.9999
     cfg.print_every = 1
-    cfg.n_epochs = 2
+    cfg.n_epochs = 100
     cfg.min_delta = 1e-3
     cfg.patience = 20
 
