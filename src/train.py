@@ -135,7 +135,6 @@ def optimise_model(model, init_params, train_dataset, validate_dataset, cfg, key
 
         # generate subkeys
         key, training_subkeys = keyGen(key, n_subkeys = cfg.n_batches)
-        key, validation_subkeys = keyGen(key, n_subkeys = int(cfg.n_batches / cfg.print_every))
 
         # initialise the losses and the timer
         training_losses = {'total': 0, 'cross_entropy': 0, 'kl': 0, 'kl_prescale': 0}
@@ -153,51 +152,50 @@ def optimise_model(model, init_params, train_dataset, validate_dataset, cfg, key
 
             if batch % cfg.print_every == 0:
 
-                # calculate loss on validation data
-                _, (validation_losses, pen_xy, pen_down_log_p) = eval_step_jit(state.params, state, validate_dataset, kl_weight, next(validation_subkeys))
-
                 # end batches timer
                 batches_duration = time.time() - batch_start_time
 
                 # print metrics
-                print_metrics("batch", batches_duration, training_losses, training_losses, batch_range = [batch - cfg.print_every + 1, batch], 
+                print_metrics("batch", batches_duration, training_losses, batch_range = [batch - cfg.print_every + 1, batch], 
                               lr = lr_scheduler(batch - 1 + epoch * cfg.n_batches))
 
                 # store losses
                 if batch == cfg.print_every:
                     
                     t_losses_thru_training = copy(training_losses)
-                    v_losses_thru_training = copy(validation_losses)
                     
                 else:
                     
                     t_losses_thru_training = tree_map(lambda x, y: np.append(x, y), t_losses_thru_training, training_losses)
-                    v_losses_thru_training = tree_map(lambda x, y: np.append(x, y), v_losses_thru_training, validation_losses)
 
                 # re-initialise the losses and timer
                 training_losses = {'total': 0, 'cross_entropy': 0, 'kl': 0, 'kl_prescale': 0}
                 batch_start_time = time.time()
 
-        losses['epoch ' + str(epoch)] = {'t_losses': t_losses_thru_training, 'v_losses': v_losses_thru_training}
+        # calculate loss on validation data
+        key, validation_subkeys = keyGen(key, n_subkeys = 1)
+        _, (validation_losses, pen_xy, pen_down_log_p) = eval_step_jit(state.params, state, validate_dataset, kl_weight, next(validation_subkeys))
+
+        losses['epoch ' + str(epoch)] = {'t_losses': t_losses_thru_training, 'v_losses': validation_losses}
         
         # end epoch timer
         epoch_duration = time.time() - epoch_start_time
         
         # print losses (mean over all batches in epoch)
-        print_metrics("epoch", epoch_duration, t_losses_thru_training, v_losses_thru_training, epoch = epoch + 1)
+        print_metrics("epoch", epoch_duration, t_losses_thru_training, validation_losses, epoch = epoch + 1)
 
         # write images to tensorboard
         write_images_to_tensorboard(writer, pen_xy, pen_down_log_p, cfg, validate_dataset, epoch)
 
         # write metrics to tensorboard
-        write_metrics_to_tensorboard(writer, t_losses_thru_training, v_losses_thru_training, epoch)
+        write_metrics_to_tensorboard(writer, t_losses_thru_training, validation_losses, epoch)
         
         # save checkpoint
         ckpt = {'train_state': state, 'losses': losses, 'cfg': dict(cfg)}
         checkpoints.save_checkpoint(ckpt_dir = ckpt_dir, target = ckpt, step = epoch)
         
         # if early stopping criteria met, break
-        _, early_stop = early_stop.update(v_losses_thru_training['total'].mean())
+        _, early_stop = early_stop.update(validation_losses['total'].mean())
         if early_stop.should_stop:
             
             print('Early stopping criteria met, breaking...')
@@ -206,6 +204,6 @@ def optimise_model(model, init_params, train_dataset, validate_dataset, cfg, key
 
     optimisation_duration = time.time() - optimisation_start_time
 
-    print('Optimisation finished at {:.2f} hours.'.format(optimisation_duration / 60**2))
+    print('Optimisation finished in {:.2f} hours.'.format(optimisation_duration / 60**2))
             
     return state, losses

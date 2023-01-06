@@ -23,7 +23,7 @@ def smooth_maximum(p_xy_t, smooth_max_parameter = 1e3):
 
     return p_xy
 
-def print_metrics(phase, duration, t_losses, v_losses, batch_range = [], lr = [], epoch = []):
+def print_metrics(phase, duration, t_losses, v_losses = [], batch_range = [], lr = [], epoch = []):
     
     if phase == "batch":
         
@@ -36,14 +36,14 @@ def print_metrics(phase, duration, t_losses, v_losses, batch_range = [], lr = []
         print(s1.format(epoch, duration / 60))
         
     s2 = """  Training loss {:.4f} = cross entropy {:.4f} + KL {:.4f} ({:.4f})"""
-    s3 = """  Validation loss {:.4f} = cross entropy {:.4f} + KL {:.4f} ({:.4f})"""
     print(s2.format(t_losses['total'].mean(), t_losses['cross_entropy'].mean(),
                     t_losses['kl'].mean(), t_losses['kl_prescale'].mean()))
-    print(s3.format(v_losses['total'].mean(), v_losses['cross_entropy'].mean(),
-                    v_losses['kl'].mean(), v_losses['kl_prescale'].mean()))
-    
+
     if phase == "epoch":
-        print("""\n""")
+
+        s3 = """  Validation loss {:.4f} = cross entropy {:.4f} + KL {:.4f} ({:.4f})\n"""
+        print(s3.format(v_losses['total'].mean(), v_losses['cross_entropy'].mean(),
+                        v_losses['kl'].mean(), v_losses['kl_prescale'].mean()))
 
 def write_images_to_tensorboard(writer, pen_xy, pen_down_log_p, cfg, validate_dataset, epoch):
 
@@ -104,7 +104,7 @@ def write_images_to_tensorboard(writer, pen_xy, pen_down_log_p, cfg, validate_da
     if epoch == 0:
 
         writer.image("original_images", original_images(), epoch)
-        
+
     writer.image("reconstructed_images", reconstructed_images(), epoch)
 
 def write_metrics_to_tensorboard(writer, t_losses, v_losses, epoch):
