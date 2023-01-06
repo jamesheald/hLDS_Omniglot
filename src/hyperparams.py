@@ -22,7 +22,7 @@ def get_hyperparameter_configuration():
     cfg.tfds_seed = 0
 
     # images to write to tensorboard
-    cfg.square_image_grid_size = 6
+    cfg.square_image_grid_size = 7
 
     # optimisation
     cfg.kl_warmup_start = 500
@@ -38,7 +38,7 @@ def get_hyperparameter_configuration():
     cfg.decay_steps = 1
     cfg.decay_factor = 0.9999
     cfg.print_every = 1
-    cfg.n_epochs = 1
+    cfg.n_epochs = 2
     cfg.min_delta = 1e-3
     cfg.patience = 20
 
