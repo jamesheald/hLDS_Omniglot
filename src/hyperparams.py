@@ -37,9 +37,9 @@ def get_hyperparameter_configuration():
     cfg.step_size = 0.001
     cfg.decay_steps = 1
     cfg.decay_factor = 0.9999
-    cfg.print_every = 1
-    cfg.n_epochs = 100
+    cfg.print_every = 50
+    cfg.n_epochs = 10
     cfg.min_delta = 1e-3
-    cfg.patience = 20
+    cfg.patience = 2
 
     return cfg
