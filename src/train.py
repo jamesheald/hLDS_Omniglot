@@ -49,8 +49,8 @@ def loss_fn(params, state, data, kl_weight, key):
         # compute the logit for each pixel
         logits = np.log(p_xy / (1 - p_xy))
 
-        # compute the average cross entropy across pixels
-        cross_entropy = np.mean(optax.sigmoid_binary_cross_entropy(logits, data))
+        # compute the total cross entropy across pixels
+        cross_entropy = np.sum(optax.sigmoid_binary_cross_entropy(logits, data))
 
         return cross_entropy
 
