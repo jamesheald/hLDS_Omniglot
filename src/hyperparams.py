@@ -10,7 +10,7 @@ def get_hyperparameter_configuration():
     cfg.alpha_fraction = 0.1
     cfg.dt = 0.01
     cfg.time_steps = 100
-    cfg.init_pen_log_var = 10.0
+    cfg.init_pen_log_var = 5.0 # 5.7 correponds to 3 SD = 105/2 (canvas half width)
     cfg.image_dim = [105, 105]
     cfg.prior_z_log_var = -2.0
     cfg.jax_seed = 0

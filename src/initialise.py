@@ -1,7 +1,6 @@
 from jax import random
 import jax.numpy as np
-from jax.tree_util import tree_map
-from utils import keyGen
+from utils import keyGen, construct_dynamics_matrix
 from hLDS import VAE
 from flax.core.frozen_dict import freeze, unfreeze
 from flax.metrics import tensorboard
@@ -83,28 +82,6 @@ def initialise_decoder_parameters(cfg, key):
             'W_p': W_p,
             'b_p': b_p,
             'pen_log_var': cfg.init_pen_log_var}
-
-def construct_dynamics_matrix(params):
-
-    def construct_P(P):
-        return P @ P.T
-
-    def construct_S(U, V):
-        return U @ np.transpose(V, (0, 2, 1)) - V @ np.transpose(U, (0, 2, 1))
-
-    def construct_A(L, P, S):
-        return (-L @ np.transpose(L, (0, 2, 1)) + S) @ P
-
-    # positive semi-definite matrix P
-    P = tree_map(construct_P, params['P'])
-
-    # skew symmetric matrix S
-    S = tree_map(construct_S, params['S_U'], params['S_V'])
-
-    # dynamics matrix A (loops organised along axis 0)
-    A = tree_map(construct_A, params['L'], S, P)
-
-    return A
 
 def initialise_model(cfg, train_dataset):
 

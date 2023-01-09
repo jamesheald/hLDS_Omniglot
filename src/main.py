@@ -30,3 +30,10 @@ state, losses = optimise_model(model, init_params, train_dataset, validate_datas
 # from flax.training import checkpoints, train_state
 # ckpt = {'train_state': state, 'losses': losses, 'cfg': dict(cfg)}
 # restored_state = checkpoints.restore_checkpoint(ckpt_dir = ckpt_dir, target = ckpt)
+
+from jax import numpy as np
+import tensorflow_datasets as tfds
+from utils import forward_pass_model
+params = init_params
+data = np.array(list(tfds.as_numpy(train_dataset))[0]['image']).reshape(cfg.batch_size,105,105,1)
+output = forward_pass_model(model, params, data, cfg, key)
