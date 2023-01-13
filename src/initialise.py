@@ -3,9 +3,8 @@ import jax.numpy as np
 from utils import keyGen, construct_dynamics_matrix
 from hLDS import VAE
 from flax.core.frozen_dict import freeze, unfreeze
-from flax.metrics import tensorboard
 
-def initialise_decoder_parameters(cfg, key):
+def initialise_decoder_parameters(args, key):
     
     P = []
     S_U = []
@@ -17,13 +16,13 @@ def initialise_decoder_parameters(cfg, key):
     gamma = []
     t = []
     
-    n_layers = len(cfg.x_dim)
+    n_layers = len(args.x_dim)
     for layer in range(n_layers):
 
         key, subkeys = keyGen(key, n_subkeys = 7)
         
-        n_loops = cfg.n_loops[layer]
-        x_dim = cfg.x_dim[layer]
+        n_loops = args.n_loops[layer]
+        x_dim = args.x_dim[layer]
         
         # parameters of layer-specific P
         p = random.normal(next(subkeys), (x_dim, x_dim))
@@ -50,11 +49,11 @@ def initialise_decoder_parameters(cfg, key):
         if layer != 0:
             
             # weights for additive inputs
-            std_W = 1 / np.sqrt(cfg.x_dim[layer - 1])
-            W_u.append(random.normal(next(subkeys), (cfg.x_dim[layer], cfg.x_dim[layer - 1])) * std_W)
+            std_W = 1 / np.sqrt(args.x_dim[layer - 1])
+            W_u.append(random.normal(next(subkeys), (args.x_dim[layer], args.x_dim[layer - 1])) * std_W)
             
             # weights for modulatory factors
-            W_a.append(random.normal(next(subkeys), (n_loops, cfg.x_dim[layer - 1])) * std_W)
+            W_a.append(random.normal(next(subkeys), (n_loops, args.x_dim[layer - 1])) * std_W)
 
             # bias for modulatory factors
             b_a.append(np.zeros((n_loops)))
@@ -62,8 +61,8 @@ def initialise_decoder_parameters(cfg, key):
         if layer == n_layers - 1:
             
             # weights for pen actions
-            std_W = 1 / np.sqrt(cfg.x_dim[layer])
-            W_p = random.normal(next(subkeys), (3, cfg.x_dim[layer])) * std_W
+            std_W = 1 / np.sqrt(args.x_dim[layer])
+            W_p = random.normal(next(subkeys), (3, args.x_dim[layer])) * std_W
             
             # bias for pen actions
             b_p = np.zeros((3))
@@ -86,28 +85,28 @@ def initialise_decoder_parameters(cfg, key):
             'W_p': W_p,
             'b_p': b_p,
             'gamma': gamma,
-            'pen_log_var': cfg.init_pen_log_var}
+            'pen_log_var': args.init_pen_log_var}
 
-def initialise_model(cfg, train_dataset):
+def initialise_model(args, train_dataset):
 
     # explicitly generate a PRNG key
-    key = random.PRNGKey(cfg.jax_seed)
+    key = random.PRNGKey(args.jax_seed)
 
     # generate the required number of subkeys
     key, subkeys = keyGen(key, n_subkeys = 2) 
 
-    # cfg.n_batches = len(train_dataset) # TFDS change
-    cfg.n_batches = 1
-    cfg.n_loops = [int(np.ceil(i * cfg.alpha_fraction)) for i in cfg.x_dim]
+    # args.n_batches = len(train_dataset) # TFDS change
+    args.n_batches = 1
+    args.n_loops = [int(np.ceil(i * args.alpha_fraction)) for i in args.x_dim]
 
     # define the model
-    model = VAE(n_loops_top_layer = cfg.n_loops[0], x_dim = cfg.x_dim, image_dim = cfg.image_dim, T = cfg.time_steps, dt = cfg.dt, tau = cfg.tau)
+    model = VAE(n_loops_top_layer = args.n_loops[0], x_dim = args.x_dim, image_dim = args.image_dim, T = args.time_steps, dt = args.dt, tau = args.tau)
     
     # initialise the model parameters
-    params = {'prior_z_log_var': cfg.prior_z_log_var,
-              'decoder': initialise_decoder_parameters(cfg, next(subkeys))}
+    params = {'prior_z_log_var': args.prior_z_log_var,
+              'decoder': initialise_decoder_parameters(args, next(subkeys))}
     A, gamma = construct_dynamics_matrix(params['decoder'])
-    init_params = model.init(data = np.ones((cfg.image_dim[0], cfg.image_dim[1], 2)), params = params['decoder'], A = A,
+    init_params = model.init(data = np.ones((args.image_dim[0], args.image_dim[1], 2)), params = params['decoder'], A = A,
                              gamma = gamma, key = next(subkeys), rngs = {'params': random.PRNGKey(0)})['params']
 
     # concatenate all parameters into a single dictionary
@@ -115,12 +114,4 @@ def initialise_model(cfg, train_dataset):
     init_params = init_params | params
     init_params = freeze(init_params)
 
-    return model, init_params, cfg, key
-
-def setup_tensorboard_and_checkpoints(folder_name):
-
-    writer = tensorboard.SummaryWriter('runs/' + folder_name) # to view tensorboard results, call 'tensorboard --logdir=.' in runs folder (not in python)
-
-    ckpt_dir = 'tmp/flax-checkpointing/' + folder_name
-
-    return writer, ckpt_dir
+    return model, init_params, args, key

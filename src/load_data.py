@@ -42,12 +42,12 @@ def load_motor(fn):
 			break
 	return space_motor_to_img(arr[:2]) # first two columns are coordinates, the last column is the timing data (in milliseconds)
 
-def create_data_split(cfg):
+def create_data_split(args):
 
-	rdm.seed(cfg.data_seed)
+	rdm.seed(args.data_seed)
 
-	img_dir = '../data/images_background_small1'
-	stroke_dir = '../data/strokes_background_small1'
+	img_dir = '../../omniglot/python/images_background_small1'
+	stroke_dir = '../../omniglot/python/strokes_background_small1'
 	n_char = 4 # number of renditions for each character
 	n_alpha = 1 # number of alphabets to show
 
@@ -62,7 +62,7 @@ def create_data_split(cfg):
 		for c in range(n_char):
 
 			# choose a random character from the alphabet
-			character_id = rdm.randint(1, len(os.listdir(os.path.join(img_dir, alpha_name))))
+			character_id = rdm.randint(0, len(os.listdir(os.path.join(img_dir, alpha_name))) - 1)
 
 			# get image and stroke directories for this character
 			img_char_dir = os.path.join(img_dir, alpha_name, 'character' + num2str(character_id))
