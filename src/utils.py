@@ -74,9 +74,9 @@ def print_metrics(phase, duration, t_losses, v_losses = [], batch_range = [], lr
 		print(s3.format(v_losses['total'].mean(), v_losses['cross_entropy'].mean(),
 						v_losses['kl'].mean(), v_losses['kl_prescale'].mean()))
 
-def create_figure(cfg):
+def create_figure(args):
 
-	fig, axs = plt.subplots(cfg.square_image_grid_size, cfg.square_image_grid_size)
+	fig, axs = plt.subplots(args.square_image_grid_size, args.square_image_grid_size)
 	fig.figsize = (10, 10)
 	fig.set_dpi(50)
 
@@ -93,10 +93,10 @@ def convert_figure_to_image(fig):
 
 	return gray_image
 
-def original_images(validate_dataset, cfg):
+def original_images(validate_dataset, args):
 
 	# create figure of original images
-	fig, axs = create_figure(cfg)
+	fig, axs = create_figure(args)
 	for i, ax in enumerate(axs.ravel()):
 
 		ax.imshow(validate_dataset[i,:,:,0], cmap = 'gray')
@@ -108,21 +108,21 @@ def original_images(validate_dataset, cfg):
 
 	return image
 
-def reconstructed_images(pen_xy0, pen_xy, pen_down_log_p, cfg):
+def reconstructed_images(pen_xy0, pen_xy, pen_down_log_p, args):
 
 	# create figure of reconstructed images
-	fig, axs = create_figure(cfg)
+	fig, axs = create_figure(args)
 	T = len(pen_xy[0][:,0])
 	for i, ax in enumerate(axs.ravel()):
 
-		ax.plot([pen_xy0[i][1], pen_xy[i][0,1]], [cfg.image_dim[0] - pen_xy0[i][0], cfg.image_dim[0] - pen_xy[i][0,0]], alpha =  float(np.exp(pen_down_log_p[i,0])), color = 'k', linewidth = 5)
+		ax.plot([pen_xy0[i][1], pen_xy[i][0,1]], [args.image_dim[0] - pen_xy0[i][0], args.image_dim[0] - pen_xy[i][0,0]], alpha =  float(np.exp(pen_down_log_p[i,0])), color = 'k', linewidth = 5)
 
 		for t in range(T - 1):
 
-			ax.plot(pen_xy[i][t:t + 2,1], cfg.image_dim[0] - pen_xy[i][t:t + 2,0], alpha =  float(np.exp(pen_down_log_p[i,t + 1])), color = 'k', linewidth = 5)
+			ax.plot(pen_xy[i][t:t + 2,1], args.image_dim[0] - pen_xy[i][t:t + 2,0], alpha =  float(np.exp(pen_down_log_p[i,t + 1])), color = 'k', linewidth = 5)
 
-		ax.set_ylim([0, cfg.image_dim[0]])
-		ax.set_xlim([0, cfg.image_dim[1]])
+		ax.set_ylim([0, args.image_dim[0]])
+		ax.set_xlim([0, args.image_dim[1]])
 		ax.set_yticks([])
 		ax.set_xticks([])
 
@@ -131,13 +131,13 @@ def reconstructed_images(pen_xy0, pen_xy, pen_down_log_p, cfg):
 
 	return image
 
-def write_images_to_tensorboard(writer, output, cfg, validate_dataset, epoch):
+def write_images_to_tensorboard(writer, output, args, validate_dataset, epoch):
 
 	if epoch == 0:
 
-		writer.image("original_images", original_images(validate_dataset, cfg), epoch)
+		writer.image("original_images", original_images(validate_dataset, args), epoch)
 
-	writer.image("reconstructed_images", reconstructed_images(output['pen_xy0'], output['pen_xy'], output['pen_down_log_p'], cfg), epoch)
+	writer.image("reconstructed_images", reconstructed_images(output['pen_xy0'], output['pen_xy'], output['pen_down_log_p'], args), epoch)
 
 def write_metrics_to_tensorboard(writer, t_losses, v_losses, epoch):
 
@@ -151,7 +151,7 @@ def write_metrics_to_tensorboard(writer, t_losses, v_losses, epoch):
 	writer.scalar('KL prescale (validation)', v_losses['kl_prescale'].mean(), epoch)
 	writer.flush()
 
-def forward_pass_model(model, params, data, cfg, key):
+def forward_pass_model(model, params, data, args, key):
 
 	def apply_model(model, params, data, A, gamma, key):
 
@@ -170,7 +170,7 @@ def forward_pass_model(model, params, data, cfg, key):
 	output = batch_apply_model(model, params, data, A, gamma, subkeys)
 
 	# store the original and reconstructed images in the model output
-	output['input_images'] =  original_images(data, cfg)
-	output['output_images'] = reconstructed_images(output['pen_xy0'], output['pen_xy'], output['pen_down_log_p'], cfg)
+	output['input_images'] =  original_images(data, args)
+	output['output_images'] = reconstructed_images(output['pen_xy0'], output['pen_xy'], output['pen_down_log_p'], args)
 
 	return output

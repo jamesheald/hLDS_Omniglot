@@ -7,26 +7,27 @@ from flax.training.early_stopping import EarlyStopping
 import tensorflow_datasets as tfds
 from utils import keyGen, stabilise_variance, smooth_maximum, print_metrics, write_images_to_tensorboard, write_metrics_to_tensorboard
 from initialise import construct_dynamics_matrix
+from flax.metrics import tensorboard
 import time
 from copy import copy
 
-def kl_scheduler(cfg):
+def kl_scheduler(args):
     
     kl_schedule = []
-    for i_batch in range(int(cfg.n_batches * cfg.n_epochs)):
+    for i_batch in range(int(args.n_batches * args.n_epochs)):
         
-        warm_up_fraction = min(max((i_batch - cfg.kl_warmup_start) / (cfg.kl_warmup_end - cfg.kl_warmup_start), 0), 1)
+        warm_up_fraction = min(max((i_batch - args.kl_warmup_start) / (args.kl_warmup_end - args.kl_warmup_start), 0), 1)
         
-        kl_schedule.append(cfg.kl_min + warm_up_fraction * (cfg.kl_max - cfg.kl_min))
+        kl_schedule.append(args.kl_min + warm_up_fraction * (args.kl_max - args.kl_min))
 
     return iter(kl_schedule)
 
-def create_train_state(model, init_params, cfg):
+def create_train_state(model, init_params, args):
     
-    lr_scheduler = optax.exponential_decay(cfg.step_size, cfg.decay_steps, cfg.decay_factor)
+    lr_scheduler = optax.exponential_decay(args.step_size, args.decay_steps, args.decay_factor)
 
-    optimiser = optax.chain(optax.adamw(learning_rate = lr_scheduler, b1 = cfg.adam_b1, b2 = cfg.adam_b2, eps = cfg.adam_eps, 
-                            weight_decay = cfg.weight_decay), optax.clip_by_global_norm(cfg.max_grad_norm))
+    optimiser = optax.chain(optax.adamw(learning_rate = lr_scheduler, b1 = args.adam_b1, b2 = args.adam_b2, eps = args.adam_eps, 
+                            weight_decay = args.weight_decay), optax.clip_by_global_norm(args.max_grad_norm))
     
     state = train_state.TrainState.create(apply_fn = model.apply, params = init_params, tx = optimiser)
 
@@ -108,22 +109,33 @@ def train_step(state, training_data, kl_weight, key):
 
 train_step_jit = jit(train_step)
 
-def optimise_model(model, init_params, train_dataset, validate_dataset, cfg, key, ckpt_dir, writer):
+def create_tensorboard_writer(args):
+
+    # create a tensorboard writer
+    # to view tensorboard results, call 'tensorboard --logdir=.' in runs folder from terminal
+    writer = tensorboard.SummaryWriter('runs/' + args.folder_name)
+
+    return writer
+
+def optimise_model(model, init_params, train_dataset, validate_dataset, args, key):
 
     # start optimisation timer
     optimisation_start_time = time.time()
 
     # create schedule for KL divergence weight
-    kl_schedule = kl_scheduler(cfg)
+    kl_schedule = kl_scheduler(args)
     
     # create train state
-    state, lr_scheduler = create_train_state(model, init_params, cfg)
+    state, lr_scheduler = create_train_state(model, init_params, args)
     
     # set early stopping criteria
-    early_stop = EarlyStopping(min_delta = cfg.min_delta, patience = cfg.patience)
+    early_stop = EarlyStopping(min_delta = args.min_delta, patience = args.patience)
+
+    # create tensorboard writer
+    writer = create_tensorboard_writer(args)
     
     # loop over epochs
-    for epoch in range(cfg.n_epochs):
+    for epoch in range(args.n_epochs):
         
         # start epoch timer
         epoch_start_time = time.time()
@@ -133,14 +145,14 @@ def optimise_model(model, init_params, train_dataset, validate_dataset, cfg, key
         # train_datagen = iter(tfds.as_numpy(train_dataset)) TFDS change
 
         # generate subkeys
-        key, training_subkeys = keyGen(key, n_subkeys = cfg.n_batches)
+        key, training_subkeys = keyGen(key, n_subkeys = args.n_batches)
 
         # initialise the losses and the timer
         training_losses = {'total': 0, 'cross_entropy': 0, 'kl': 0, 'kl_prescale': 0}
         batch_start_time = time.time()
 
         # loop over batches
-        for batch in range(1, cfg.n_batches + 1):
+        for batch in range(1, args.n_batches + 1):
 
             kl_weight = np.array(next(kl_schedule))
 
@@ -148,19 +160,19 @@ def optimise_model(model, init_params, train_dataset, validate_dataset, cfg, key
             state, all_losses = train_step_jit(state, train_dataset, kl_weight, next(training_subkeys))
 
             # training losses (average of 'print_every' batches)
-            training_losses = tree_map(lambda x, y: x + y / cfg.print_every, training_losses, all_losses)
+            training_losses = tree_map(lambda x, y: x + y / args.print_every, training_losses, all_losses)
 
-            if batch % cfg.print_every == 0:
+            if batch % args.print_every == 0:
 
                 # end batches timer
                 batches_duration = time.time() - batch_start_time
 
                 # print metrics
-                print_metrics("batch", batches_duration, training_losses, batch_range = [batch - cfg.print_every + 1, batch], 
-                              lr = lr_scheduler(batch - 1 + epoch * cfg.n_batches))
+                print_metrics("batch", batches_duration, training_losses, batch_range = [batch - args.print_every + 1, batch], 
+                              lr = lr_scheduler(batch - 1 + epoch * args.n_batches))
 
                 # store losses
-                if batch == cfg.print_every:
+                if batch == args.print_every:
                     
                     t_losses_thru_training = copy(training_losses)
                     
@@ -183,14 +195,14 @@ def optimise_model(model, init_params, train_dataset, validate_dataset, cfg, key
         print_metrics("epoch", epoch_duration, t_losses_thru_training, validation_losses, epoch = epoch + 1)
 
         # write images to tensorboard
-        write_images_to_tensorboard(writer, output, cfg, validate_dataset, epoch)
+        write_images_to_tensorboard(writer, output, args, validate_dataset, epoch)
 
         # write metrics to tensorboard
         write_metrics_to_tensorboard(writer, t_losses_thru_training, validation_losses, epoch)
         
         # save checkpoint
         ckpt = {'train_state': state}
-        checkpoints.save_checkpoint(ckpt_dir = ckpt_dir, target = ckpt, step = epoch)
+        checkpoints.save_checkpoint(ckpt_dir = 'runs/' + args.folder_name, target = ckpt, step = epoch)
         
         # # if early stopping criteria met, break
         # _, early_stop = early_stop.update(validation_losses['total'].mean())
