@@ -59,6 +59,7 @@ class decoder(nn.Module):
     image_dim: list
     T: int
     dt: float
+    tau: float
 
     def setup(self):
 
@@ -69,7 +70,7 @@ class decoder(nn.Module):
         # transform list of image dimensions to an array
         self.image_dimensions = np.array(self.image_dim)
 
-    def __call__(self, params, A, z1, z2):
+    def __call__(self, data, params, A, gamma, z1, z2):
 
         def decode_one_step(carry, inputs):
             
@@ -81,9 +82,11 @@ class decoder(nn.Module):
 
                 return W @ x
 
-            def update_state(A, x, alphas, u):
+            def update_state(A, gamma, x, alphas, u):
 
-                return x + (np.sum(alphas[:, None, None] * A, axis = 0) @ x + u) * self.dt
+            	aAx = np.sum(alphas[:,None] * (A @ x), axis = 0)
+
+            	return x + ((1 - gamma) * aAx - gamma * x + u) * self.dt / self.tau
 
             def compute_pen_actions(W, x, b):
 
@@ -99,10 +102,11 @@ class decoder(nn.Module):
 
                     return -0.5 * (x - mu)**2 / np.exp(log_var)
 
-                ll_p_x = log_Gaussian_kernel(pen_xy[0], self.grid_x_locations, params['pen_log_var'])
-                ll_p_y = log_Gaussian_kernel(pen_xy[1], self.grid_y_locations, params['pen_log_var'])
+                # pen position is in image coordinates (distance from top of image, distance from left of image)
+                ll_p_y = log_Gaussian_kernel(pen_xy[0], self.grid_y_locations, params['pen_log_var'])
+                ll_p_x = log_Gaussian_kernel(pen_xy[1], self.grid_x_locations, params['pen_log_var'])
 
-                p_xy_t = np.exp(ll_p_x[None,:] + ll_p_y[:,None] + pen_down_log_p)
+                p_xy_t = np.exp(ll_p_y[:,None] + ll_p_x[None,:] + pen_down_log_p)
 
                 return p_xy_t
             
@@ -135,7 +139,7 @@ class decoder(nn.Module):
             u = [np.zeros(x[0].shape), *tree_map(compute_inputs, params['W_u'], x[:2])]
 
             # update the states
-            x_new = tree_map(update_state, A, x, alphas, u)
+            x_new = tree_map(update_state, A, gamma, x, alphas, u)
 
             # linear readout from the state at the bottom layer
             pen_actions = compute_pen_actions(params['W_p'], x_new[-1], params['b_p'])
@@ -162,8 +166,10 @@ class decoder(nn.Module):
         n_layers = len(self.x_dim)
         x0 = [z2[:], *[np.zeros(self.x_dim[layer]) for layer in range(1, n_layers)]]
 
-        # initialise pen in centre of canvas
-        pen_xy0 = self.image_dimensions / 2
+        # initialise pen position at the one True pixel in the second channel of the image
+        # pen position is in image coordinates (distance from top of image, distance from left of image)
+        # pen_xy0 = self.image_dimensions / 2
+        pen_xy0 = np.squeeze(np.array(np.where(data, size = 1))).astype(float)
 
         carry = x0, pen_xy0
         inputs = np.repeat(z1[None,:], self.T, axis = 0)
@@ -185,17 +191,18 @@ class VAE(nn.Module):
     image_dim: list
     T: int
     dt: float
+    tau: float
 
     def setup(self):
         
         self.encoder = encoder(self.n_loops_top_layer, self.x_dim[0])
         self.sampler = sampler(self.n_loops_top_layer)
-        self.decoder = decoder(self.x_dim, self.image_dim, self.T, self.dt)
+        self.decoder = decoder(self.x_dim, self.image_dim, self.T, self.dt, self.tau)
 
-    def __call__(self, data, params, A, key):
+    def __call__(self, data, params, A, gamma, key):
 
-        output_encoder = self.encoder(data[None,:,:,None])
+        output_encoder = self.encoder(data[None,:,:,:])
         z1, z2 = self.sampler(output_encoder, params, key)
-        output_decoder = self.decoder(params, A, z1, z2)
+        output_decoder = self.decoder(data[:,:,1], params, A, gamma, z1, z2)
         
         return output_encoder | output_decoder

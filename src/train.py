@@ -32,12 +32,12 @@ def create_train_state(model, init_params, cfg):
 
     return state, lr_scheduler
 
-def apply_model(state, data, A, key):
+def apply_model(state, data, A, gamma, key):
 
-    return state.apply_fn({'params': {'encoder': state.params['encoder']}}, data, state.params['decoder'], A, key)
+    return state.apply_fn({'params': {'encoder': state.params['encoder']}}, data, state.params['decoder'], A, gamma, key)
     # return state.apply_fn({'params': state.params}, data, state.params['decoder'], A, key)
 
-batch_apply_model = vmap(apply_model, in_axes = (None, 0, None, 0))
+batch_apply_model = vmap(apply_model, in_axes = (None, 0, None, None, 0))
     
 def loss_fn(params, state, data, kl_weight, key):
 
@@ -50,7 +50,7 @@ def loss_fn(params, state, data, kl_weight, key):
         logits = np.log(p_xy / (1 - p_xy))
 
         # compute the total cross entropy across pixels
-        cross_entropy = np.sum(optax.sigmoid_binary_cross_entropy(logits, data))
+        cross_entropy = np.sum(optax.sigmoid_binary_cross_entropy(logits, data[:,:,0]))
 
         return cross_entropy
 
@@ -71,14 +71,14 @@ def loss_fn(params, state, data, kl_weight, key):
     batch_KL_diagonal_Gaussians = vmap(KL_diagonal_Gaussians, in_axes = (None, None, 0, 0))
 
     # construct the dynamics of each loop from the parameters
-    A = construct_dynamics_matrix(params['decoder'])
+    A, gamma = construct_dynamics_matrix(params['decoder'])
     
     # create a subkey for each example in the batch
     batch_size = data.shape[0]
     subkeys = random.split(key, batch_size)
 
     # apply the model
-    output = batch_apply_model(state, data, A, subkeys)
+    output = batch_apply_model(state, data, A, gamma, subkeys)
 
     # calculate the cross entropy
     cross_entropy = batch_cross_entropy_loss(output['p_xy_t'], data).mean()
@@ -93,14 +93,14 @@ def loss_fn(params, state, data, kl_weight, key):
 
     all_losses = {'cross_entropy': cross_entropy, 'kl': kl_loss, 'kl_prescale': kl_loss_prescale, 'total': cross_entropy + kl_loss}
 
-    return all_losses['total'], (all_losses, output['pen_xy'], output['pen_down_log_p'])
+    return all_losses['total'], (all_losses, output)
 
 loss_grad = value_and_grad(loss_fn, has_aux = True)
 eval_step_jit = jit(loss_fn)
 
 def train_step(state, training_data, kl_weight, key):
     
-    (loss, (all_losses, _, _)), grads = loss_grad(state.params, state, training_data, kl_weight, key)
+    (loss, (all_losses, _)), grads = loss_grad(state.params, state, training_data, kl_weight, key)
 
     state = state.apply_gradients(grads = grads)
     
@@ -123,7 +123,6 @@ def optimise_model(model, init_params, train_dataset, validate_dataset, cfg, key
     early_stop = EarlyStopping(min_delta = cfg.min_delta, patience = cfg.patience)
     
     # loop over epochs
-    losses = {}
     for epoch in range(cfg.n_epochs):
         
         # start epoch timer
@@ -131,7 +130,7 @@ def optimise_model(model, init_params, train_dataset, validate_dataset, cfg, key
         
         # convert the tf.data.Dataset train_dataset into an iterable
         # this iterable is shuffled differently each epoch
-        train_datagen = iter(tfds.as_numpy(train_dataset))
+        # train_datagen = iter(tfds.as_numpy(train_dataset)) TFDS change
 
         # generate subkeys
         key, training_subkeys = keyGen(key, n_subkeys = cfg.n_batches)
@@ -145,7 +144,8 @@ def optimise_model(model, init_params, train_dataset, validate_dataset, cfg, key
 
             kl_weight = np.array(next(kl_schedule))
 
-            state, all_losses = train_step_jit(state, np.array(next(train_datagen)['image']), kl_weight, next(training_subkeys))
+            # state, all_losses = train_step_jit(state, np.array(next(train_datagen)['image']), kl_weight, next(training_subkeys)) TFDS change
+            state, all_losses = train_step_jit(state, train_dataset, kl_weight, next(training_subkeys))
 
             # training losses (average of 'print_every' batches)
             training_losses = tree_map(lambda x, y: x + y / cfg.print_every, training_losses, all_losses)
@@ -174,9 +174,7 @@ def optimise_model(model, init_params, train_dataset, validate_dataset, cfg, key
 
         # calculate loss on validation data
         key, validation_subkeys = keyGen(key, n_subkeys = 1)
-        _, (validation_losses, pen_xy, pen_down_log_p) = eval_step_jit(state.params, state, validate_dataset, kl_weight, next(validation_subkeys))
-
-        losses['epoch ' + str(epoch)] = {'t_losses': t_losses_thru_training, 'v_losses': validation_losses}
+        _, (validation_losses, output) = eval_step_jit(state.params, state, validate_dataset, kl_weight, next(validation_subkeys))
         
         # end epoch timer
         epoch_duration = time.time() - epoch_start_time
@@ -185,25 +183,25 @@ def optimise_model(model, init_params, train_dataset, validate_dataset, cfg, key
         print_metrics("epoch", epoch_duration, t_losses_thru_training, validation_losses, epoch = epoch + 1)
 
         # write images to tensorboard
-        write_images_to_tensorboard(writer, pen_xy, pen_down_log_p, cfg, validate_dataset, epoch)
+        write_images_to_tensorboard(writer, output, cfg, validate_dataset, epoch)
 
         # write metrics to tensorboard
         write_metrics_to_tensorboard(writer, t_losses_thru_training, validation_losses, epoch)
         
         # save checkpoint
-        ckpt = {'train_state': state, 'losses': losses, 'cfg': dict(cfg)}
+        ckpt = {'train_state': state}
         checkpoints.save_checkpoint(ckpt_dir = ckpt_dir, target = ckpt, step = epoch)
         
-        # if early stopping criteria met, break
-        _, early_stop = early_stop.update(validation_losses['total'].mean())
-        if early_stop.should_stop:
+        # # if early stopping criteria met, break
+        # _, early_stop = early_stop.update(validation_losses['total'].mean())
+        # if early_stop.should_stop:
             
-            print('Early stopping criteria met, breaking...')
+        #     print('Early stopping criteria met, breaking...')
             
-            break
+        #     break
 
     optimisation_duration = time.time() - optimisation_start_time
 
     print('Optimisation finished in {:.2f} hours.'.format(optimisation_duration / 60**2))
             
-    return state, losses
+    return state
