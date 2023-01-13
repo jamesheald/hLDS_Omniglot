@@ -9,6 +9,7 @@ def get_hyperparameter_configuration():
     cfg.x_dim = [20, 50, 200]
     cfg.alpha_fraction = 0.1
     cfg.dt = 0.01
+    cfg.tau = 0.2
     cfg.time_steps = 100
     cfg.init_pen_log_var = 5.0 # 5.7 correponds to 3 SD = 105/2 (canvas half width)
     cfg.image_dim = [105, 105]
@@ -19,15 +20,15 @@ def get_hyperparameter_configuration():
     cfg.percent_data_to_use = 100
     cfg.fraction_for_validation = 0.2
     cfg.batch_size = 32
-    cfg.tfds_seed = 0
+    cfg.data_seed = 0
 
     # images to write to tensorboard
-    cfg.square_image_grid_size = 7
+    cfg.square_image_grid_size = 2
 
     # optimisation
     cfg.kl_warmup_start = 500
     cfg.kl_warmup_end = 1000
-    cfg.kl_min = 0.01
+    cfg.kl_min = 1 # 0.01
     cfg.kl_max = 1
     cfg.adam_b1 = 0.9
     cfg.adam_b2 = 0.999                        
@@ -37,8 +38,8 @@ def get_hyperparameter_configuration():
     cfg.step_size = 0.001
     cfg.decay_steps = 1
     cfg.decay_factor = 0.9999
-    cfg.print_every = 50
-    cfg.n_epochs = 10
+    cfg.print_every = 1
+    cfg.n_epochs = 10000
     cfg.min_delta = 1e-3
     cfg.patience = 2
 

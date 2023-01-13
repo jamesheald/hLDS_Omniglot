@@ -14,6 +14,7 @@ def initialise_decoder_parameters(cfg, key):
     W_u = []
     W_a = []
     b_a = []
+    gamma = []
     t = []
     
     n_layers = len(cfg.x_dim)
@@ -34,10 +35,9 @@ def initialise_decoder_parameters(cfg, key):
         u = random.normal(next(subkeys), (n_loops, x_dim, int(x_dim / n_loops)))
         v = random.normal(next(subkeys), (n_loops, x_dim, int(x_dim / n_loops)))
         
-        # set variance of elements of S to 1/(n_loops * x_dim)
         s = u @ np.transpose(v, (0, 2, 1)) - v @ np.transpose(u, (0, 2, 1))
-        f = 1 / np.std(s, axis = (1, 2))[:, None, None] / np.sqrt(n_loops * x_dim)
-        # f = 1 / np.linalg.norm(s, axis = (1, 2))[:, None, None] / n_loops # frobenius norm of each loop 1/n_loops
+        # f = 1 / np.std(s, axis = (1, 2))[:, None, None] / np.sqrt(n_loops * x_dim) # set variance of elements of each loop of S to 1/(n_loops * x_dim)
+        f = 1 / np.linalg.norm(s, axis = (1, 2))[:, None, None] / np.sqrt(n_loops) # set frobenius norm squared of each loop to 1/n_loops
         S_U.append(u * np.sqrt(f))
         S_V.append(v * np.sqrt(f))
 
@@ -68,6 +68,10 @@ def initialise_decoder_parameters(cfg, key):
             # bias for pen actions
             b_p = np.zeros((3))
             
+        # coefficient for interpolating between loop dynamics and the dynamics of a negative identity matrix 
+        # this allows the real part of the eigenvalues of the dynamics matrix to be shifted to the left (for numerical stability)
+        gamma.append(0.0)
+
         # temperature of layer-specific softmax function
         t.append(1.0)
 
@@ -81,6 +85,7 @@ def initialise_decoder_parameters(cfg, key):
             't': t,
             'W_p': W_p,
             'b_p': b_p,
+            'gamma': gamma,
             'pen_log_var': cfg.init_pen_log_var}
 
 def initialise_model(cfg, train_dataset):
@@ -91,17 +96,19 @@ def initialise_model(cfg, train_dataset):
     # generate the required number of subkeys
     key, subkeys = keyGen(key, n_subkeys = 2) 
 
-    cfg.n_batches = len(train_dataset)
+    # cfg.n_batches = len(train_dataset) # TFDS change
+    cfg.n_batches = 1
     cfg.n_loops = [int(np.ceil(i * cfg.alpha_fraction)) for i in cfg.x_dim]
 
     # define the model
-    model = VAE(n_loops_top_layer = cfg.n_loops[0], x_dim = cfg.x_dim, image_dim = cfg.image_dim, T = cfg.time_steps, dt = cfg.dt)
+    model = VAE(n_loops_top_layer = cfg.n_loops[0], x_dim = cfg.x_dim, image_dim = cfg.image_dim, T = cfg.time_steps, dt = cfg.dt, tau = cfg.tau)
     
     # initialise the model parameters
     params = {'prior_z_log_var': cfg.prior_z_log_var,
               'decoder': initialise_decoder_parameters(cfg, next(subkeys))}
-    init_params = model.init(data = np.ones((1, cfg.image_dim[0], cfg.image_dim[1], 1)), params = params['decoder'], A = construct_dynamics_matrix(params['decoder']),
-                             key = next(subkeys), rngs = {'params': random.PRNGKey(0)})['params']
+    A, gamma = construct_dynamics_matrix(params['decoder'])
+    init_params = model.init(data = np.ones((cfg.image_dim[0], cfg.image_dim[1], 2)), params = params['decoder'], A = A,
+                             gamma = gamma, key = next(subkeys), rngs = {'params': random.PRNGKey(0)})['params']
 
     # concatenate all parameters into a single dictionary
     init_params = unfreeze(init_params)
