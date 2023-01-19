@@ -52,7 +52,7 @@ class sampler(nn.Module):
         # split the latents into top-layer alphas, softmax(z1), and initial state, z2
         z1, z2 = np.split(z, [self.n_loops_top_layer], axis = 1)
 
-        return nn.activation.softmax(z1 / params['t'][0], axis = 1), np.squeeze(z2)
+        return nn.activation.softmax(z1, axis = 1), np.squeeze(z2)
 
 class decoder(nn.Module):
     x_dim: list
@@ -74,9 +74,9 @@ class decoder(nn.Module):
 
         def decode_one_step(carry, inputs):
             
-            def compute_alphas(W, x, b, t):
+            def compute_alphas(W, x, b):
 
-                return nn.activation.softmax( (W @ x + b) / t, axis = 0)
+                return nn.activation.softmax(W @ x + b, axis = 0)
 
             def compute_inputs(W, x):
 
@@ -102,11 +102,20 @@ class decoder(nn.Module):
 
                     return -0.5 * (x - mu)**2 / np.exp(log_var)
 
+                def stabilise_cross_entropy(p_xy_t, p_min = 1e-16):
+                    """
+                    squash the per pixel bernoulli parameter between p_min and 1 - p_min for numerical stability
+                    """
+
+                    return p_xy_t * (1 - p_min * 2) + p_min
+
                 # pen position is in image coordinates (distance from top of image, distance from left of image)
                 ll_p_y = log_Gaussian_kernel(pen_xy[0], self.grid_y_locations, params['pen_log_var'])
                 ll_p_x = log_Gaussian_kernel(pen_xy[1], self.grid_x_locations, params['pen_log_var'])
 
                 p_xy_t = np.exp(ll_p_y[:,None] + ll_p_x[None,:] + pen_down_log_p)
+
+                p_xy_t = stabilise_cross_entropy(p_xy_t)
 
                 return p_xy_t
             
@@ -118,8 +127,9 @@ class decoder(nn.Module):
                 # align pen position relative to centre of canvas
                 pen_xy = pen_xy - self.image_dimensions / 2
 
-                # transform canvas boundaries to -/+ 5
-                pen_xy = pen_xy * 2 / self.image_dimensions * 5
+                # transform canvas boundaries to -/+ f (this determines degree of squashing)
+                f = 2
+                pen_xy = pen_xy * 2 / self.image_dimensions * f
 
                 # squash pen position to be within canvas boundaries
                 pen_xy = nn.sigmoid(pen_xy)
@@ -127,13 +137,23 @@ class decoder(nn.Module):
                 # transform canvas boundaries back to their original values
                 pen_xy_new = pen_xy * self.image_dimensions
 
+                # x = np.linspace(0,105,1000)
+                # a = np.array([105])
+                # y = x - a / 2
+                # y = y * 2 / a * 2
+                # y = 1/(1 + np.exp(-y))
+                # y = y * a
+                # plt.plot(x,x)
+                # plt.plot(x,y)
+                # plt.show()
+
                 return pen_xy_new
 
             x, pen_xy = carry
             top_layer_alphas = inputs
 
             # compute the alphas
-            alphas = [np.squeeze(top_layer_alphas), *tree_map(compute_alphas, params['W_a'], x[:2], params['b_a'], params['t'][1:])]
+            alphas = [np.squeeze(top_layer_alphas), *tree_map(compute_alphas, params['W_a'], x[:2], params['b_a'])]
 
             # compute the additive inputs
             u = [np.zeros(x[0].shape), *tree_map(compute_inputs, params['W_u'], x[:2])]

@@ -1,9 +1,3 @@
-?get rid of lists and tree_map, pass separate arrays for each layer - non array inputs
-
-alternative to converting tuple to list in decoder, prepending lists?
-
-most of time when running model forward is decoder (because it scales linearly with number of time steps)
-
 replace cnn with capsule?
 do i need to standardize images (and how) or is normalised (as is) fine?
 ultimately replace pen with myosuite finger to make it a finger painting task - could have flexion/extension determine finger up/down
