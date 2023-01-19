@@ -14,7 +14,6 @@ def initialise_decoder_parameters(args, key):
     W_a = []
     b_a = []
     gamma = []
-    t = []
     
     n_layers = len(args.x_dim)
     for layer in range(n_layers):
@@ -68,11 +67,8 @@ def initialise_decoder_parameters(args, key):
             b_p = np.zeros((3))
             
         # coefficient for interpolating between loop dynamics and the dynamics of a negative identity matrix 
-        # this allows the real part of the eigenvalues of the dynamics matrix to be shifted to the left (for numerical stability)
+        # this shifts the real part of the eigenvalues of the dynamics matrix to the left (for numerical stability)
         gamma.append(0.0)
-
-        # temperature of layer-specific softmax function
-        t.append(1.0)
 
     return {'P': P, 
             'S_U': S_U,
@@ -81,7 +77,6 @@ def initialise_decoder_parameters(args, key):
             'W_u': W_u,
             'W_a': W_a, 
             'b_a': b_a,
-            't': t,
             'W_p': W_p,
             'b_p': b_p,
             'gamma': gamma,

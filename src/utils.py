@@ -153,11 +153,11 @@ def write_metrics_to_tensorboard(writer, t_losses, v_losses, epoch):
 
 def forward_pass_model(model, params, data, args, key):
 
-	def apply_model(model, params, data, A, gamma, key):
+	def apply_model(model, params, A, gamma, data, key):
 
 		return model.apply({'params': {'encoder': params['encoder']}}, data, params['decoder'], A, gamma, key)
 
-	batch_apply_model = vmap(apply_model, in_axes = (None, None, 0, None, None, 0))
+	batch_apply_model = vmap(apply_model, in_axes = (None, None, None, None, 0, 0))
 
 	# construct the dynamics of each loop from the parameters
 	A, gamma = construct_dynamics_matrix(params['decoder'])
@@ -167,7 +167,7 @@ def forward_pass_model(model, params, data, args, key):
 	subkeys = random.split(key, batch_size)
 
 	# apply the model
-	output = batch_apply_model(model, params, data, A, gamma, subkeys)
+	output = batch_apply_model(model, params, A, gamma, data, subkeys)
 
 	# store the original and reconstructed images in the model output
 	output['input_images'] =  original_images(data, args)

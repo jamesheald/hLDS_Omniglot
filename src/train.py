@@ -33,12 +33,20 @@ def create_train_state(model, init_params, args):
 
     return state, lr_scheduler
 
-def apply_model(state, data, A, gamma, key):
+def create_tensorboard_writer(args):
 
-    return state.apply_fn({'params': {'encoder': state.params['encoder']}}, data, state.params['decoder'], A, gamma, key)
-    # return state.apply_fn({'params': state.params}, data, state.params['decoder'], A, key)
+    # create a tensorboard writer
+    # to view tensorboard results, call 'tensorboard --logdir=.' in runs folder from terminal
+    writer = tensorboard.SummaryWriter('runs/' + args.folder_name)
 
-batch_apply_model = vmap(apply_model, in_axes = (None, 0, None, None, 0))
+    return writer
+
+def apply_model(apply_fn, params, A, gamma, data, key):
+
+    return apply_fn({'params': {'encoder': params['encoder']}}, data, params['decoder'], A, gamma, key)
+    # return apply_fn({'params': state.params}, data, state.params['decoder'], A, gamma, key)
+
+batch_apply_model = vmap(apply_model, in_axes = (None, None, None, None, 0, 0))
     
 def loss_fn(params, state, data, kl_weight, key):
 
@@ -79,7 +87,7 @@ def loss_fn(params, state, data, kl_weight, key):
     subkeys = random.split(key, batch_size)
 
     # apply the model
-    output = batch_apply_model(state, data, A, gamma, subkeys)
+    output = batch_apply_model(state.apply_fn, params, A, gamma, data, subkeys)
 
     # calculate the cross entropy
     cross_entropy = batch_cross_entropy_loss(output['p_xy_t'], data).mean()
@@ -108,14 +116,6 @@ def train_step(state, training_data, kl_weight, key):
     return state, all_losses
 
 train_step_jit = jit(train_step)
-
-def create_tensorboard_writer(args):
-
-    # create a tensorboard writer
-    # to view tensorboard results, call 'tensorboard --logdir=.' in runs folder from terminal
-    writer = tensorboard.SummaryWriter('runs/' + args.folder_name)
-
-    return writer
 
 def optimise_model(model, init_params, train_dataset, validate_dataset, args, key):
 
@@ -184,33 +184,34 @@ def optimise_model(model, init_params, train_dataset, validate_dataset, args, ke
                 training_losses = {'total': 0, 'cross_entropy': 0, 'kl': 0, 'kl_prescale': 0}
                 batch_start_time = time.time()
 
-        # calculate loss on validation data
-        key, validation_subkeys = keyGen(key, n_subkeys = 1)
-        _, (validation_losses, output) = eval_step_jit(state.params, state, validate_dataset, kl_weight, next(validation_subkeys))
-        
-        # end epoch timer
-        epoch_duration = time.time() - epoch_start_time
-        
-        # print losses (mean over all batches in epoch)
-        print_metrics("epoch", epoch_duration, t_losses_thru_training, validation_losses, epoch = epoch + 1)
+        if epoch % 50 == 0:
 
-        # write images to tensorboard
-        write_images_to_tensorboard(writer, output, args, validate_dataset, epoch)
+            # calculate loss on validation data
+            key, validation_subkeys = keyGen(key, n_subkeys = 1)
+            _, (validation_losses, output) = eval_step_jit(state.params, state, validate_dataset, kl_weight, next(validation_subkeys))
+            
+            # end epoch timer
+            epoch_duration = time.time() - epoch_start_time
+            
+            # print losses (mean over all batches in epoch)
+            print_metrics("epoch", epoch_duration, t_losses_thru_training, validation_losses, epoch = epoch + 1)
 
-        # write metrics to tensorboard
-        write_metrics_to_tensorboard(writer, t_losses_thru_training, validation_losses, epoch)
-        
-        # save checkpoint
-        ckpt = {'train_state': state}
-        checkpoints.save_checkpoint(ckpt_dir = 'runs/' + args.folder_name, target = ckpt, step = epoch)
-        
-        # # if early stopping criteria met, break
-        # _, early_stop = early_stop.update(validation_losses['total'].mean())
-        # if early_stop.should_stop:
+            # write images to tensorboard
+            write_images_to_tensorboard(writer, output, args, validate_dataset, epoch)
+
+            # write metrics to tensorboard
+            write_metrics_to_tensorboard(writer, t_losses_thru_training, validation_losses, epoch)
             
-        #     print('Early stopping criteria met, breaking...')
-            
-        #     break
+            # save checkpoint
+            checkpoints.save_checkpoint(ckpt_dir = 'runs/' + args.folder_name, target = state, step = epoch)
+        
+            # # if early stopping criteria met, break
+            # _, early_stop = early_stop.update(validation_losses['total'].mean())
+            # if early_stop.should_stop:
+                
+            #     print('Early stopping criteria met, breaking...')
+                
+            #     break
 
     optimisation_duration = time.time() - optimisation_start_time
 

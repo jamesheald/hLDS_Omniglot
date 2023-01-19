@@ -4,3 +4,5 @@ flax
 tensorflow
 tensorflow_datasets
 ml_collections
+moviepy
+scikit-image
