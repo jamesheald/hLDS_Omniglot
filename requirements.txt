@@ -6,4 +6,3 @@ tensorflow_datasets
 ml_collections
 moviepy
 scikit-image
-yo
