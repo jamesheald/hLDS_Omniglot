@@ -70,7 +70,7 @@ class decoder(nn.Module):
         # transform list of image dimensions to an array
         self.image_dimensions = np.array(self.image_dim)
 
-    def __call__(self, data, params, A, gamma, z1, z2):
+    def __call__(self, params, A, gamma, z1, z2):
 
         def decode_one_step(carry, inputs):
             
@@ -186,10 +186,9 @@ class decoder(nn.Module):
         n_layers = len(self.x_dim)
         x0 = [z2[:], *[np.zeros(self.x_dim[layer]) for layer in range(1, n_layers)]]
 
-        # initialise pen position at the one True pixel in the second channel of the image
+        # initialise pen position at centre of canvas
         # pen position is in image coordinates (distance from top of image, distance from left of image)
-        # pen_xy0 = self.image_dimensions / 2
-        pen_xy0 = np.squeeze(np.array(np.where(data, size = 1))).astype(float)
+        pen_xy0 = self.image_dimensions / 2
 
         carry = x0, pen_xy0
         inputs = np.repeat(z1[None,:], self.T, axis = 0)
@@ -221,8 +220,8 @@ class VAE(nn.Module):
 
     def __call__(self, data, params, A, gamma, key):
 
-        output_encoder = self.encoder(data[None,:,:,:])
+        output_encoder = self.encoder(data[None,:,:,None])
         z1, z2 = self.sampler(output_encoder, params, key)
-        output_decoder = self.decoder(data[:,:,1], params, A, gamma, z1, z2)
+        output_decoder = self.decoder(params, A, gamma, z1, z2)
         
         return output_encoder | output_decoder

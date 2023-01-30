@@ -90,8 +90,7 @@ def initialise_model(args, train_dataset):
     # generate the required number of subkeys
     key, subkeys = keyGen(key, n_subkeys = 2) 
 
-    # args.n_batches = len(train_dataset) # TFDS change
-    args.n_batches = 1
+    args.n_batches = len(train_dataset)
     args.n_loops = [int(np.ceil(i * args.alpha_fraction)) for i in args.x_dim]
 
     # define the model
@@ -101,7 +100,7 @@ def initialise_model(args, train_dataset):
     params = {'prior_z_log_var': args.prior_z_log_var,
               'decoder': initialise_decoder_parameters(args, next(subkeys))}
     A, gamma = construct_dynamics_matrix(params['decoder'])
-    init_params = model.init(data = np.ones((args.image_dim[0], args.image_dim[1], 2)), params = params['decoder'], A = A,
+    init_params = model.init(data = np.ones((args.image_dim[0], args.image_dim[1])), params = params['decoder'], A = A,
                              gamma = gamma, key = next(subkeys), rngs = {'params': random.PRNGKey(0)})['params']
 
     # concatenate all parameters into a single dictionary

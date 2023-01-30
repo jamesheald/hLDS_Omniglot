@@ -59,7 +59,7 @@ def loss_fn(params, state, data, kl_weight, key):
         logits = np.log(p_xy / (1 - p_xy))
 
         # compute the total cross entropy across pixels
-        cross_entropy = np.sum(optax.sigmoid_binary_cross_entropy(logits, data[:,:,0]))
+        cross_entropy = np.sum(optax.sigmoid_binary_cross_entropy(logits, data))
 
         return cross_entropy
 
@@ -142,7 +142,7 @@ def optimise_model(model, init_params, train_dataset, validate_dataset, args, ke
         
         # convert the tf.data.Dataset train_dataset into an iterable
         # this iterable is shuffled differently each epoch
-        # train_datagen = iter(tfds.as_numpy(train_dataset)) TFDS change
+        train_datagen = iter(tfds.as_numpy(train_dataset))
 
         # generate subkeys
         key, training_subkeys = keyGen(key, n_subkeys = args.n_batches)
@@ -155,9 +155,8 @@ def optimise_model(model, init_params, train_dataset, validate_dataset, args, ke
         for batch in range(1, args.n_batches + 1):
 
             kl_weight = np.array(next(kl_schedule))
-
-            # state, all_losses = train_step_jit(state, np.array(next(train_datagen)['image']), kl_weight, next(training_subkeys)) TFDS change
-            state, all_losses = train_step_jit(state, train_dataset, kl_weight, next(training_subkeys))
+            breakpoint()
+            state, all_losses = train_step_jit(state, np.array(next(train_datagen)['image']), kl_weight, next(training_subkeys))
 
             # training losses (average of 'print_every' batches)
             training_losses = tree_map(lambda x, y: x + y / args.print_every, training_losses, all_losses)

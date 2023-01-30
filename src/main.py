@@ -25,9 +25,9 @@ def main():
     parser.add_argument('--jax_seed',                type = int, default = 0)
 
     # data
-    parser.add_argument('--percent_data_to_use',     type = int, default = 100)
-    parser.add_argument('--fraction_for_validation', type = int, default = 0.2)
-    parser.add_argument('--batch_size',              type = int, default = 32)
+    parser.add_argument('--percent_data_to_use',     type = int, default = 1)
+    parser.add_argument('--fraction_for_validation', type = int, default = 1-0.025/120) # 0.2
+    parser.add_argument('--batch_size',              type = int, default = 4) # 32
     parser.add_argument('--data_seed',               type = int, default = 0)
 
     # images to write to tensorboard
@@ -64,7 +64,7 @@ def main():
 
     print('eventually remove if epoch % 50 == 0 code')
 
-    train_dataset, validate_dataset = create_data_split(args)
+    train_dataset, validate_dataset, _, _ = create_data_split(args)
 
     # from jax.config import config
     # config.update("jax_debug_nans", False)

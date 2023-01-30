@@ -99,7 +99,7 @@ def original_images(validate_dataset, args):
 	fig, axs = create_figure(args)
 	for i, ax in enumerate(axs.ravel()):
 
-		ax.imshow(validate_dataset[i,:,:,0], cmap = 'gray')
+		ax.imshow(validate_dataset[i,:,:], cmap = 'gray')
 		ax.set_xticks([])
 		ax.set_yticks([])
 
