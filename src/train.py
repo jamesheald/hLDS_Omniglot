@@ -178,9 +178,7 @@ def optimise_model(model, params, train_dataset, validate_dataset, args, key):
             # training losses (average of 'print_every' batches)
             training_losses = tree_map(lambda x, y: x + y / args.print_every, training_losses, all_losses)
 
-            #if batch % args.print_every == 0:
-
-        if epoch % 500 == 0:
+            if batch % args.print_every == 0:
 
                 # end batches timer
                 batches_duration = time.time() - batch_start_time
@@ -202,34 +200,32 @@ def optimise_model(model, params, train_dataset, validate_dataset, args, key):
                 training_losses = {'total': 0, 'cross_entropy': 0, 'kl': 0, 'kl_prescale': 0}
                 batch_start_time = time.time()
 
-        if epoch % 500 == 0:
-
-            # calculate loss on validation data
-            key, validation_subkeys = keyGen(key, n_subkeys = 1)
-            _, (validation_losses, output) = eval_step_jit(state.params, state, validate_dataset, kl_weight, next(validation_subkeys))
+        # calculate loss on validation data
+        key, validation_subkeys = keyGen(key, n_subkeys = 1)
+        _, (validation_losses, output) = eval_step_jit(state.params, state, validate_dataset, kl_weight, next(validation_subkeys))
             
-            # end epoch timer
-            epoch_duration = time.time() - epoch_start_time
+        # end epoch timer
+        epoch_duration = time.time() - epoch_start_time
             
-            # print losses (mean over all batches in epoch)
-            print_metrics("epoch", epoch_duration, t_losses_thru_training, validation_losses, epoch = epoch + 1)
+        # print losses (mean over all batches in epoch)
+        print_metrics("epoch", epoch_duration, t_losses_thru_training, validation_losses, epoch = epoch + 1)
 
-            # write images to tensorboard
-            write_images_to_tensorboard(writer, output, args, validate_dataset, epoch)
+        # write images to tensorboard
+        write_images_to_tensorboard(writer, output, args, validate_dataset, epoch)
 
-            # write metrics to tensorboard
-            write_metrics_to_tensorboard(writer, t_losses_thru_training, validation_losses, epoch)
+        # write metrics to tensorboard
+        write_metrics_to_tensorboard(writer, t_losses_thru_training, validation_losses, epoch)
             
-            # save checkpoint
-            checkpoints.save_checkpoint(ckpt_dir = 'runs/' + args.folder_name, target = state, step = epoch)
+        # save checkpoint
+        checkpoints.save_checkpoint(ckpt_dir = 'runs/' + args.folder_name, target = state, step = epoch)
         
-            # # if early stopping criteria met, break
-            # _, early_stop = early_stop.update(validation_losses['total'].mean())
-            # if early_stop.should_stop:
+        # if early stopping criteria met, break
+        _, early_stop = early_stop.update(validation_losses['total'].mean())
+        if early_stop.should_stop:
                 
-            #     print('Early stopping criteria met, breaking...')
+            print('Early stopping criteria met, breaking...')
                 
-            #     break
+            break
 
     optimisation_duration = time.time() - optimisation_start_time
 

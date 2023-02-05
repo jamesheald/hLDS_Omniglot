@@ -21,24 +21,24 @@ def main():
     parser.add_argument('--dt',                      type = float, default = 0.01)
     parser.add_argument('--tau',                     type = float, default = 0.2)
     parser.add_argument('--time_steps',              type = float, default = 100)
-    parser.add_argument('--init_pen_log_var',        type = float, default = 5.0) # 5.7 correponds to 3 SD = 105/2 (canvas half width)
+    parser.add_argument('--init_pen_log_var',        type = float, default = 10.0) # 5.7 correponds to 3 SD = 105/2 (canvas half width)
     parser.add_argument('--image_dim',               default = [105, 105])
     parser.add_argument('--prior_z_log_var',         type = float, default = -2.0)
     parser.add_argument('--jax_seed',                type = int, default = 0)
 
     # data
-    parser.add_argument('--percent_data_to_use',     type = int, default = 1)
-    parser.add_argument('--fraction_for_validation', type = int, default = 1-0.025/120) # 0.2
-    parser.add_argument('--batch_size',              type = int, default = 4) # 32
+    parser.add_argument('--percent_data_to_use',     type = int, default = 100)
+    parser.add_argument('--fraction_for_validation', type = int, default = 0.1) # 1-0.025/120 for 4 when percent_data_to_use is 1
+    parser.add_argument('--batch_size',              type = int, default = 32)
     parser.add_argument('--data_seed',               type = int, default = 0)
 
     # images to write to tensorboard
-    parser.add_argument('--square_image_grid_size',  type = int, default = 2)
+    parser.add_argument('--square_image_grid_size',  type = int, default = 5)
 
     # optimisation
     parser.add_argument('--kl_warmup_start',         type = int, default = 500)
     parser.add_argument('--kl_warmup_end',           type = int, default = 1000)
-    parser.add_argument('--kl_min',                  type = float, default = 0.1) # 0.01
+    parser.add_argument('--kl_min',                  type = float, default = 0.01)
     parser.add_argument('--kl_max',                  type = float, default = 1.0)
     parser.add_argument('--adam_b1',                 type = float, default = 0.9)
     parser.add_argument('--adam_b2',                 type = float, default = 0.999)
@@ -48,8 +48,8 @@ def main():
     parser.add_argument('--step_size',               type = float, default = 0.001)
     parser.add_argument('--decay_steps',             type = int, default = 1)
     parser.add_argument('--decay_factor',            type = float, default = 0.9999)
-    parser.add_argument('--print_every',             type = int, default = 1)
-    parser.add_argument('--n_epochs',                type = int, default = 100000)
+    parser.add_argument('--print_every',             type = int, default = 50)
+    parser.add_argument('--n_epochs',                type = int, default = 1e16)
     parser.add_argument('--min_delta',               type = float, default = 1e-3)
     parser.add_argument('--patience',                type = int, default = 2)
 
@@ -63,8 +63,6 @@ def main():
     file = open(path, 'wb') # change 'wb' to 'rb' to load
     pickle.dump(args, file) # change to args = pickle.load(file) to load
     file.close()
-
-    print('eventually remove if epoch % 50 == 0 code')
 
     train_dataset, validate_dataset, _, _ = create_data_split(args)
 
