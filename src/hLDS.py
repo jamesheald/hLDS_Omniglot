@@ -102,7 +102,7 @@ class decoder(nn.Module):
 
                     return -0.5 * (x - mu)**2 / np.exp(log_var)
 
-                def stabilise_cross_entropy(p_xy_t, p_min = 1e-16):
+                def stabilise_cross_entropy(p_xy_t, p_min = 1e-6):
                     """
                     squash the per pixel bernoulli parameter between p_min and 1 - p_min for numerical stability
                     """

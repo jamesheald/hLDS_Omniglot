@@ -10,6 +10,8 @@ from initialise import construct_dynamics_matrix
 from flax.metrics import tensorboard
 import time
 from copy import copy
+import jax
+from jax import lax
 
 def kl_scheduler(args):
     
@@ -22,14 +24,18 @@ def kl_scheduler(args):
 
     return iter(kl_schedule)
 
-def create_train_state(model, init_params, args):
+def get_train_state(model, params, args):
     
     lr_scheduler = optax.exponential_decay(args.step_size, args.decay_steps, args.decay_factor)
 
     optimiser = optax.chain(optax.adamw(learning_rate = lr_scheduler, b1 = args.adam_b1, b2 = args.adam_b2, eps = args.adam_eps, 
                             weight_decay = args.weight_decay), optax.clip_by_global_norm(args.max_grad_norm))
     
-    state = train_state.TrainState.create(apply_fn = model.apply, params = init_params, tx = optimiser)
+    state = train_state.TrainState.create(apply_fn = model.apply, params = params, tx = optimiser)
+
+    if args.reload_state:
+
+        state = checkpoints.restore_checkpoint(ckpt_dir = 'runs/' + args.reload_folder_name, target = state)
 
     return state, lr_scheduler
 
@@ -102,6 +108,17 @@ def loss_fn(params, state, data, kl_weight, key):
 
     all_losses = {'cross_entropy': cross_entropy, 'kl': kl_loss, 'kl_prescale': kl_loss_prescale, 'total': cross_entropy + kl_loss}
 
+    def breakpoint_if_nan(all_losses, output):
+        is_nan = np.isnan(all_losses['total']).any()
+        def true_fn(operands):
+            jax.debug.breakpoint()
+        def false_fn(operands):
+            all_losses, output = operands
+            pass
+        lax.cond(is_nan, true_fn, false_fn, (all_losses, output))
+
+    breakpoint_if_nan(all_losses, output)
+
     return all_losses['total'], (all_losses, output)
 
 loss_grad = value_and_grad(loss_fn, has_aux = True)
@@ -117,7 +134,7 @@ def train_step(state, training_data, kl_weight, key):
 
 train_step_jit = jit(train_step)
 
-def optimise_model(model, init_params, train_dataset, validate_dataset, args, key):
+def optimise_model(model, params, train_dataset, validate_dataset, args, key):
 
     # start optimisation timer
     optimisation_start_time = time.time()
@@ -126,7 +143,7 @@ def optimise_model(model, init_params, train_dataset, validate_dataset, args, ke
     kl_schedule = kl_scheduler(args)
     
     # create train state
-    state, lr_scheduler = create_train_state(model, init_params, args)
+    state, lr_scheduler = get_train_state(model, params, args)
     
     # set early stopping criteria
     early_stop = EarlyStopping(min_delta = args.min_delta, patience = args.patience)
@@ -155,20 +172,22 @@ def optimise_model(model, init_params, train_dataset, validate_dataset, args, ke
         for batch in range(1, args.n_batches + 1):
 
             kl_weight = np.array(next(kl_schedule))
-            breakpoint()
+
             state, all_losses = train_step_jit(state, np.array(next(train_datagen)['image']), kl_weight, next(training_subkeys))
 
             # training losses (average of 'print_every' batches)
             training_losses = tree_map(lambda x, y: x + y / args.print_every, training_losses, all_losses)
 
-            if batch % args.print_every == 0:
+            #if batch % args.print_every == 0:
+
+        if epoch % 500 == 0:
 
                 # end batches timer
                 batches_duration = time.time() - batch_start_time
 
                 # print metrics
                 print_metrics("batch", batches_duration, training_losses, batch_range = [batch - args.print_every + 1, batch], 
-                              lr = lr_scheduler(batch - 1 + epoch * args.n_batches))
+                              lr = lr_scheduler(state.step - 1))
 
                 # store losses
                 if batch == args.print_every:
@@ -183,7 +202,7 @@ def optimise_model(model, init_params, train_dataset, validate_dataset, args, ke
                 training_losses = {'total': 0, 'cross_entropy': 0, 'kl': 0, 'kl_prescale': 0}
                 batch_start_time = time.time()
 
-        if epoch % 50 == 0:
+        if epoch % 500 == 0:
 
             # calculate loss on validation data
             key, validation_subkeys = keyGen(key, n_subkeys = 1)

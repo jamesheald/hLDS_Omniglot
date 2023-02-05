@@ -10,8 +10,10 @@ def main():
 
     parser = argparse.ArgumentParser(description = 'hyperparameters')
 
-    # model
-    parser.add_argument('--folder_name',             default = 'hLDS')
+    # directories
+    parser.add_argument('--folder_name',             default = 'to_save_model')
+    parser.add_argument('--reload_state',            type = bool, default = False)
+    parser.add_argument('--reload_folder_name',      default = 'saved_model')
 
     # model
     parser.add_argument('--x_dim',                   default = [20, 50, 200])
@@ -47,7 +49,7 @@ def main():
     parser.add_argument('--decay_steps',             type = int, default = 1)
     parser.add_argument('--decay_factor',            type = float, default = 0.9999)
     parser.add_argument('--print_every',             type = int, default = 1)
-    parser.add_argument('--n_epochs',                type = int, default = 10000)
+    parser.add_argument('--n_epochs',                type = int, default = 100000)
     parser.add_argument('--min_delta',               type = float, default = 1e-3)
     parser.add_argument('--patience',                type = int, default = 2)
 
@@ -72,24 +74,15 @@ def main():
     # type help at a breakpoint() to see available commands
     # use xeus-python kernel -- Python 3.9 (XPython) -- for debugging
 
-    model, init_params, args, key = initialise_model(args, train_dataset)
-
-    # optionally reload previously saved train state
-    if False:
-
-        from reload_checkpoint import reload_state
-        args.folder_name = 'kl01_dx2_nobreak'
-        state = reload_state(model, init_params, args)
-        params = state.params
+    model, params, args, key = initialise_model(args, train_dataset)
 
     # import jax
     # jax.profiler.start_trace('runs/' + folder_name)
-    state = optimise_model(model, init_params, train_dataset, validate_dataset, args, key)
+    state = optimise_model(model, params, train_dataset, validate_dataset, args, key)
     # jax.profiler.stop_trace()
 
     # # train_dataset = np.array(list(tfds.as_numpy(train_dataset))[0]['image']).reshape(args.batch_size,105,105,1)
     # from utils import forward_pass_model
-    # params = init_params
     # output = forward_pass_model(model, params, train_dataset, args, key)
 
 if __name__ == '__main__':
