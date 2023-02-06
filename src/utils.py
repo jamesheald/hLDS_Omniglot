@@ -52,6 +52,34 @@ def smooth_maximum(p_xy_t, smooth_max_parameter = 1e3):
 
 	return p_xy
 
+def instantiate_a_myosuite_environment(hyperparams, environment_name, key):
+
+    # create an instance of the myosuite environment
+    env = gym.make(environment_name) # 'myoFingerReachFixed-v0'
+
+    # generate a random seed for the myosuite environment
+    env_seed = get_environment_seed(key)
+    env.seed(env_seed)
+
+    # set the duration of each timestep of the myosuite simulation in seconds
+    # this should be done before calling env.reset to ensure that env.sim.data.qvel is in the correct units
+    env = set_the_timestep_duration(env, hyperparams['dt'])
+    
+    return env
+
+def get_environment_seed(key):
+    
+    seed = int(random.randint(key, (), 0, np.iinfo(np.int32).max))
+    
+    return seed
+
+def set_the_timestep_duration(env, dt):
+    
+    # mujoco calculates the timestep duration based on the frame_skip variable, so set frame_skip
+    env.env.frame_skip = dt / env.sim.model.opt.timestep
+        
+    return env
+
 def print_metrics(phase, duration, t_losses, v_losses = [], batch_range = [], lr = [], epoch = []):
 	
 	if phase == "batch":

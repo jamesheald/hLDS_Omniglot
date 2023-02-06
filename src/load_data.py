@@ -2,6 +2,7 @@ import tensorflow as tf
 import tensorflow_datasets as tfds
 import jax.numpy as np
 import numpy as onp
+
 # hide any GPUs from TensorFlow, otherwise TF might reserve memory and make it unavailable to JAX
 tf.config.set_visible_devices([], device_type = 'GPU')
 
@@ -42,7 +43,7 @@ def create_data_split(cfg):
     train_str = 'train[:{}%]'.format(cfg.percent_data_to_use)
     test_str = 'test[:{}%]'.format(cfg.percent_data_to_use)
 
-    (full_train_set, test_dataset), ds_info = tfds.load('Omniglot', split = ['train', 'test'], shuffle_files = True, as_supervised = False, with_info = True)
+    (full_train_set, test_dataset), ds_info = tfds.load('Omniglot', split = ['small1', 'small2'], shuffle_files = True, as_supervised = False, with_info = True)
     
     full_train_set = full_train_set.map(prepare_image, num_parallel_calls = tf.data.AUTOTUNE)
 

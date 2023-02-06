@@ -54,12 +54,45 @@ class sampler(nn.Module):
 
         return nn.activation.softmax(z1, axis = 1), np.squeeze(z2)
 
+class myosuite_dynamics(nn.Module):
+    carry_dim: int
+
+    @nn.compact
+    def __call__(self, carry, inputs):
+        
+        # set the initial carry to be a learnable parameter
+        if carry is None:
+
+            carry = self.param('carry_init', initializers.zeros, (self.carry_dim,))
+            # carry = self.param('carry_init', lambda rng, shape: np.zeros(shape), (self.carry_dim,))
+
+        # apply dropout to inputs
+        # inputs = nn.Dropout(rate = self.dropout_rate)(inputs, deterministic = deterministic)
+
+        # update the GRU
+        carry, outputs = nn.GRUCell()(carry, inputs)
+
+        # readout the fingertip position from the GRU
+        fingertip_xyz = nn.Dense(3)(outputs)
+
+        # map the fingertip position to the pen state
+        pen_state = nn.Dense(3)(fingertip_xyz)
+
+        # pen velocities in x- and y-dimensions
+        pen_xy = pen_state[:2]
+
+        # log probability that the pen is down (drawing is taking place)
+        pen_down_log_p = nn.log_sigmoid(pen_state[2])
+        
+        return carry, fingertip_xyz, pen_xy, pen_down_log_p
+
 class decoder(nn.Module):
     x_dim: list
     image_dim: list
     T: int
     dt: float
     tau: float
+    carry_dim: int
 
     def setup(self):
 
@@ -70,7 +103,7 @@ class decoder(nn.Module):
         # transform list of image dimensions to an array
         self.image_dimensions = np.array(self.image_dim)
 
-    def __call__(self, params, A, gamma, z1, z2):
+    def __call__(self, params, A, gamma, z1, z2, state):
 
         def decode_one_step(carry, inputs):
             
@@ -88,7 +121,7 @@ class decoder(nn.Module):
 
             	return x + ((1 - gamma) * aAx - gamma * x + u) * self.dt / self.tau
 
-            def compute_pen_actions(W, x, b):
+            def compute_muscle_inputs(W, x, b):
 
                 return W @ x + b
             
@@ -118,38 +151,8 @@ class decoder(nn.Module):
                 p_xy_t = stabilise_cross_entropy(p_xy_t)
 
                 return p_xy_t
-            
-            def update_pen_position(pen_xy, d_xy):
-    
-                # candidate new pen position
-                pen_xy = pen_xy + d_xy
 
-                # align pen position relative to centre of canvas
-                pen_xy = pen_xy - self.image_dimensions / 2
-
-                # transform canvas boundaries to -/+ f (this determines degree of squashing)
-                f = 2
-                pen_xy = pen_xy * 2 / self.image_dimensions * f
-
-                # squash pen position to be within canvas boundaries
-                pen_xy = nn.sigmoid(pen_xy)
-
-                # transform canvas boundaries back to their original values
-                pen_xy_new = pen_xy * self.image_dimensions
-
-                # x = np.linspace(0,105,1000)
-                # a = np.array([105])
-                # y = x - a / 2
-                # y = y * 2 / a * 2
-                # y = 1/(1 + np.exp(-y))
-                # y = y * a
-                # plt.plot(x,x)
-                # plt.plot(x,y)
-                # plt.show()
-
-                return pen_xy_new
-
-            x, pen_xy = carry
+            x, myosuite_carry = carry
             top_layer_alphas = inputs
 
             # compute the alphas
@@ -159,25 +162,19 @@ class decoder(nn.Module):
             u = [np.zeros(x[0].shape), *tree_map(compute_inputs, params['W_u'], x[:2])]
 
             # update the states
-            x_new = tree_map(update_state, A, gamma, x, alphas, u)
+            x = tree_map(update_state, A, gamma, x, alphas, u)
 
             # linear readout from the state at the bottom layer
-            pen_actions = compute_pen_actions(params['W_p'], x_new[-1], params['b_p'])
+            muscle_inputs = compute_muscle_inputs(params['W_p'], x[-1], params['b_p'])
 
-            # pen velocities in x and y directions
-            d_xy = pen_actions[:2]
-
-            # log probability that the pen is down (drawing is taking place)
-            pen_down_log_p = nn.log_sigmoid(pen_actions[2])
+            # update the state of myoFinger (and the pen) based on the muscle inputs and learned myosuite dynamics model
+            myosuite_carry, fingertip_xyz, pen_xy, pen_down_log_p = state.apply_fun(myosuite_carry, muscle_inputs)
 
             # calculate the per-pixel bernoulli parameter
             p_xy = per_pixel_bernoulli_parameter(params, pen_xy, pen_down_log_p)
 
-            # update the pen position based on the pen velocity
-            pen_xy_new = update_pen_position(pen_xy, d_xy)
-
-            carry = x_new, pen_xy_new
-            outputs = alphas, u, x_new, pen_xy_new, p_xy, pen_down_log_p
+            carry = x, myosuite_carry
+            outputs = alphas, u, x, muscle_inputs, fingertip_xyz, pen_xy, pen_down_log_p, p_xy
 
             return carry, outputs
 
@@ -186,23 +183,20 @@ class decoder(nn.Module):
         n_layers = len(self.x_dim)
         x0 = [z2[:], *[np.zeros(self.x_dim[layer]) for layer in range(1, n_layers)]]
 
-        # initialise pen position at centre of canvas
-        # pen position is in image coordinates (distance from top of image, distance from left of image)
-        pen_xy0 = self.image_dimensions / 2
-
-        carry = x0, pen_xy0
+        carry = x0, state.params['carry_init']
         inputs = np.repeat(z1[None,:], self.T, axis = 0)
 
-        _, (alphas, u, x, pen_xy, p_xy_t, pen_down_log_p) = lax.scan(decode_one_step, carry, inputs)
+        _, (alphas, u, x, muscle_inputs, fingertip_xyz, pen_xy, pen_down_log_p, p_xy_t) = lax.scan(decode_one_step, carry, inputs)
     
         return {'alphas': alphas,
                 'u': u,
                 'x0': x0,
                 'x': x,
-                'pen_xy0': pen_xy0,
+                'muscle_inputs': muscle_inputs,
+                'fingertip_xyz': fingertip_xyz,
                 'pen_xy': pen_xy,
-                'p_xy_t': p_xy_t,
-                'pen_down_log_p': pen_down_log_p}
+                'pen_down_log_p': pen_down_log_p,
+                'p_xy_t': p_xy_t}
 
 class VAE(nn.Module):
     n_loops_top_layer: int
@@ -216,12 +210,12 @@ class VAE(nn.Module):
         
         self.encoder = encoder(self.n_loops_top_layer, self.x_dim[0])
         self.sampler = sampler(self.n_loops_top_layer)
-        self.decoder = decoder(self.x_dim, self.image_dim, self.T, self.dt, self.tau)
+        self.decoder = decoder(self.x_dim, self.image_dim, self.T, self.dt, self.tau, self.carry_dim)
 
-    def __call__(self, data, params, A, gamma, key):
+    def __call__(self, data, params, A, gamma, state, key):
 
         output_encoder = self.encoder(data[None,:,:,None])
         z1, z2 = self.sampler(output_encoder, params, key)
-        output_decoder = self.decoder(params, A, gamma, z1, z2)
+        output_decoder = self.decoder(params, A, gamma, z1, z2, state)
         
         return output_encoder | output_decoder

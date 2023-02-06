@@ -1,5 +1,6 @@
 from jax import random, value_and_grad, vmap, jit
 import jax.numpy as np
+import numpy as onp
 from jax.tree_util import tree_map
 import optax
 from flax.training import checkpoints, train_state
@@ -24,18 +25,28 @@ def kl_scheduler(args):
 
     return iter(kl_schedule)
 
-def get_train_state(model, params, args):
+def get_train_state(models, params, args, model_label):
+
+    if model_label == 'vae':
+
+        model = models[0]
+        param = params[0]
+
+    elif model_label == 'myosuite':
+
+        model = models[1]
+        param = params[1]
     
     lr_scheduler = optax.exponential_decay(args.step_size, args.decay_steps, args.decay_factor)
 
     optimiser = optax.chain(optax.adamw(learning_rate = lr_scheduler, b1 = args.adam_b1, b2 = args.adam_b2, eps = args.adam_eps, 
                             weight_decay = args.weight_decay), optax.clip_by_global_norm(args.max_grad_norm))
     
-    state = train_state.TrainState.create(apply_fn = model.apply, params = params, tx = optimiser)
+    state = train_state.TrainState.create(apply_fn = model.apply, params = param, tx = optimiser)
 
     if args.reload_state:
 
-        state = checkpoints.restore_checkpoint(ckpt_dir = 'runs/' + args.reload_folder_name, target = state)
+        state = checkpoints.restore_checkpoint(ckpt_dir = 'runs/' + args.reload_folder_name + '_' + model_label, target = state)
 
     return state, lr_scheduler
 
@@ -47,14 +58,13 @@ def create_tensorboard_writer(args):
 
     return writer
 
-def apply_model(apply_fn, params, A, gamma, data, key):
+def apply_model(apply_fn, params, data, A, gamma, state_myo, key):
 
-    return apply_fn({'params': {'encoder': params['encoder']}}, data, params['decoder'], A, gamma, key)
-    # return apply_fn({'params': state.params}, data, state.params['decoder'], A, gamma, key)
+    return apply_fn({'params': {'encoder': params['encoder']}}, data, params['decoder'], A, gamma, state_myo, key)
 
 batch_apply_model = vmap(apply_model, in_axes = (None, None, None, None, 0, 0))
     
-def loss_fn(params, state, data, kl_weight, key):
+def loss_fn(params, state, state_myo, data, kl_weight, key):
 
     def cross_entropy_loss(p_xy_t, data):
     
@@ -93,7 +103,7 @@ def loss_fn(params, state, data, kl_weight, key):
     subkeys = random.split(key, batch_size)
 
     # apply the model
-    output = batch_apply_model(state.apply_fn, params, A, gamma, data, subkeys)
+    output = batch_apply_model(state.apply_fn, params, data, A, gamma, state_myo, subkeys)
 
     # calculate the cross entropy
     cross_entropy = batch_cross_entropy_loss(output['p_xy_t'], data).mean()
@@ -108,33 +118,83 @@ def loss_fn(params, state, data, kl_weight, key):
 
     all_losses = {'cross_entropy': cross_entropy, 'kl': kl_loss, 'kl_prescale': kl_loss_prescale, 'total': cross_entropy + kl_loss}
 
-    def breakpoint_if_nan(all_losses, output):
-        is_nan = np.isnan(all_losses['total']).any()
-        def true_fn(operands):
-            jax.debug.breakpoint()
-        def false_fn(operands):
-            all_losses, output = operands
-            pass
-        lax.cond(is_nan, true_fn, false_fn, (all_losses, output))
+    # def breakpoint_if_nan(all_losses, output):
+    #     is_nan = np.isnan(all_losses['total']).any()
+    #     def true_fn(operands):
+    #         jax.debug.breakpoint()
+    #     def false_fn(operands):
+    #         all_losses, output = operands
+    #         pass
+    #     lax.cond(is_nan, true_fn, false_fn, (all_losses, output))
 
-    breakpoint_if_nan(all_losses, output)
+    # breakpoint_if_nan(all_losses, output)
 
     return all_losses['total'], (all_losses, output)
 
-loss_grad = value_and_grad(loss_fn, has_aux = True)
+loss_grad_vae = value_and_grad(loss_fn, has_aux = True)
 eval_step_jit = jit(loss_fn)
 
-def train_step(state, training_data, kl_weight, key):
+def train_step_vae(state, state_myo, training_data, kl_weight, key):
     
-    (loss, (all_losses, _)), grads = loss_grad(state.params, state, training_data, kl_weight, key)
+    (loss, (all_losses, output)), grads = loss_grad_vae(state.params, state, state_myo, training_data, kl_weight, key)
 
     state = state.apply_gradients(grads = grads)
     
-    return state, all_losses
+    return state, all_losses, output['muscle_inputs']
 
-train_step_jit = jit(train_step)
+train_step_vae_jit = jit(train_step_vae)
 
-def optimise_model(model, params, train_dataset, validate_dataset, args, key):
+def perform_myosuite_simulations(env, muscle_inputs)
+
+    # number of characters
+    n_characters = muscle_inputs.shape[0]
+    
+    # number of time steps
+    n_timesteps = muscle_inputs.shape[1]
+
+    # preallocate arrays for storing the results of the myosuite simulations (fingertip position)
+    fingertip_xyz = onp.empty((n_examples, n_timesteps, 3))
+
+    for character in range(n_characters):
+
+        # reset the environment
+        env.reset()
+
+        for timestep in range(n_timesteps):
+
+            # apply the muscle inputs and step forward in time
+            # (pass a copy of the muscle inputs to env.step as it performs a sigmoid transformation)
+            obs, reward, done, info = env.step(onp.copy(muscle_inputs[s,t,:]))
+        
+            # store the fingertip position
+            fingertip_xyz[character,timestep,:] = onp.copy(env.get_obs_dict(env.sim)['tip_pos'])
+
+    return env, np.array(fingertip_position)
+
+def loss_fn_myo(params, state, muscle_inputs, fingertip_position):
+
+    carry = x0, state.params['carry_init']
+    inputs = np.repeat(z1[None,:], self.T, axis = 0)
+
+    _, (alphas, u, x, muscle_inputs, fingertip_xyz, pen_xy, pen_down_log_p, p_xy_t) = lax.scan(decode_one_step, carry, inputs)
+
+    loss = 
+
+    return loss
+
+loss_grad_myo = value_and_grad(loss_fn_myo, has_aux = True)
+
+def train_step_myo(state_myo, muscle_inputs, fingertip_position):
+    
+    (loss, (all_losses, output)), grads = loss_grad_myo(state_myo.params, state_myo, muscle_inputs, fingertip_position)
+
+    state = state.apply_gradients(grads = grads)
+    
+    return state, all_losses, output['muscle_inputs']
+
+train_step_myo_jit = jit(train_step_myo)
+
+def optimise_model(models, params, train_dataset, validate_dataset, args, key):
 
     # start optimisation timer
     optimisation_start_time = time.time()
@@ -142,8 +202,9 @@ def optimise_model(model, params, train_dataset, validate_dataset, args, key):
     # create schedule for KL divergence weight
     kl_schedule = kl_scheduler(args)
     
-    # create train state
-    state, lr_scheduler = get_train_state(model, params, args)
+    # create train states
+    state_vae, lr_scheduler = get_train_state(models, params, args, 'vae')
+    state_myo, lr_scheduler = get_train_state(models, params, args, 'myosuite')
     
     # set early stopping criteria
     early_stop = EarlyStopping(min_delta = args.min_delta, patience = args.patience)
@@ -173,7 +234,14 @@ def optimise_model(model, params, train_dataset, validate_dataset, args, key):
 
             kl_weight = np.array(next(kl_schedule))
 
-            state, all_losses = train_step_jit(state, np.array(next(train_datagen)['image']), kl_weight, next(training_subkeys))
+            # train the vae while fixing the parameters of the myosuite dynamics model
+            state_vae, all_losses, muscle_inputs = train_step_vae_jit(state_vae, state_myo, np.array(next(train_datagen)['image']), kl_weight, next(training_subkeys))
+
+            # pass the sequence of muscle inputs produced by the decoder through myosuite to obtain a sequence of fingertip positions
+            env, fingertip_position = perform_myosuite_simulations(env, muscle_inputs)
+
+            # train the myosuite dynamics model
+            state_vae, all_losses, muscle_inputs = train_step_myo_jit(state_vae, state_myo, np.array(next(train_datagen)['image']), kl_weight, next(training_subkeys))
 
             # training losses (average of 'print_every' batches)
             training_losses = tree_map(lambda x, y: x + y / args.print_every, training_losses, all_losses)
@@ -187,7 +255,7 @@ def optimise_model(model, params, train_dataset, validate_dataset, args, key):
 
                 # print metrics
                 print_metrics("batch", batches_duration, training_losses, batch_range = [batch - args.print_every + 1, batch], 
-                              lr = lr_scheduler(state.step - 1))
+                              lr = lr_scheduler(state_vae.step - 1))
 
                 # store losses
                 if batch == args.print_every:
@@ -221,7 +289,8 @@ def optimise_model(model, params, train_dataset, validate_dataset, args, key):
             write_metrics_to_tensorboard(writer, t_losses_thru_training, validation_losses, epoch)
             
             # save checkpoint
-            checkpoints.save_checkpoint(ckpt_dir = 'runs/' + args.folder_name, target = state, step = epoch)
+            checkpoints.save_checkpoint(ckpt_dir = 'runs/' + args.folder_name + '_' + 'vae', target = state_vae, step = epoch)
+            checkpoints.save_checkpoint(ckpt_dir = 'runs/' + args.folder_name + '_' + 'myosuite', target = state_myosuite, step = epoch)
         
             # # if early stopping criteria met, break
             # _, early_stop = early_stop.update(validation_losses['total'].mean())
@@ -235,4 +304,4 @@ def optimise_model(model, params, train_dataset, validate_dataset, args, key):
 
     print('Optimisation finished in {:.2f} hours.'.format(optimisation_duration / 60**2))
             
-    return state
+    return

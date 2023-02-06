@@ -21,7 +21,8 @@ def main():
     parser.add_argument('--dt',                      type = float, default = 0.01)
     parser.add_argument('--tau',                     type = float, default = 0.2)
     parser.add_argument('--time_steps',              type = float, default = 100)
-    parser.add_argument('--init_pen_log_var',        type = float, default = 5.0) # 5.7 correponds to 3 SD = 105/2 (canvas half width)
+    parser.add_argument('--carry_dim',               type = int, default = 200)
+    parser.add_argument('--init_pen_log_var',        type = float, default = 10.0) # 5.7 correponds to 3 SD = 105/2 (canvas half width)
     parser.add_argument('--image_dim',               default = [105, 105])
     parser.add_argument('--prior_z_log_var',         type = float, default = -2.0)
     parser.add_argument('--jax_seed',                type = int, default = 0)
@@ -74,11 +75,11 @@ def main():
     # type help at a breakpoint() to see available commands
     # use xeus-python kernel -- Python 3.9 (XPython) -- for debugging
 
-    model, params, args, key = initialise_model(args, train_dataset)
+    models, params, args, key = initialise_model(args, train_dataset)
 
     # import jax
     # jax.profiler.start_trace('runs/' + folder_name)
-    state = optimise_model(model, params, train_dataset, validate_dataset, args, key)
+    optimise_model(models, params, train_dataset, validate_dataset, args, key)
     # jax.profiler.stop_trace()
 
     # # train_dataset = np.array(list(tfds.as_numpy(train_dataset))[0]['image']).reshape(args.batch_size,105,105,1)
