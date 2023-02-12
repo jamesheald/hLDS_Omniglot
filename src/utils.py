@@ -5,6 +5,8 @@ from jax.tree_util import tree_map
 from moviepy.video.io.bindings import mplfig_to_npimage
 from skimage import color
 import matplotlib.pyplot as plt
+import gym
+import myosuite
 
 def construct_dynamics_matrix(params):
 
@@ -52,10 +54,24 @@ def smooth_maximum(p_xy_t, smooth_max_parameter = 1e3):
 
 	return p_xy
 
-def instantiate_a_myosuite_environment(hyperparams, environment_name, key):
+def bound_variable(x, x_centre, x_range):
+    
+    # subtract x_centre from x
+    x = x - x_centre
+
+    # transform x such that the bounds of x become -/+ f, where f determines the degree of squashing
+    f = 2
+    x = x / (x_range / 2) * f
+
+    # squash x between x_centre - x_range / 2 and x_centre + x_range / 2
+    x = x_centre + x_range * (nn.sigmoid(x) - 1 / 2)
+
+    return x
+
+def instantiate_a_myosuite_environment(args, key):
 
     # create an instance of the myosuite environment
-    env = gym.make(environment_name) # 'myoFingerReachFixed-v0'
+    env = gym.make(args.myosuite_environment)
 
     # generate a random seed for the myosuite environment
     env_seed = get_environment_seed(key)
@@ -63,7 +79,7 @@ def instantiate_a_myosuite_environment(hyperparams, environment_name, key):
 
     # set the duration of each timestep of the myosuite simulation in seconds
     # this should be done before calling env.reset to ensure that env.sim.data.qvel is in the correct units
-    env = set_the_timestep_duration(env, hyperparams['dt'])
+    env = set_the_timestep_duration(env, args.myosuite_dt)
     
     return env
 
@@ -92,14 +108,17 @@ def print_metrics(phase, duration, t_losses, v_losses = [], batch_range = [], lr
 		s1 = '\033[1m' + "Epoch {} in {:.1f} minutes" + '\033[0m'
 		print(s1.format(epoch, duration / 60))
 		
-	s2 = """  Training loss {:.4f} = cross entropy {:.4f} + KL {:.4f} ({:.4f})"""
+	s2 = """  Training loss VAE {:.4f} = cross entropy {:.4f} + KL {:.4f} ({:.4f})"""
 	print(s2.format(t_losses['total'].mean(), t_losses['cross_entropy'].mean(),
 					t_losses['kl'].mean(), t_losses['kl_prescale'].mean()))
 
+	s3 = """  Training loss myosuite {:.6f}"""
+	print(s3.format(t_losses['mse'].mean()))
+
 	if phase == "epoch":
 
-		s3 = """  Validation loss {:.4f} = cross entropy {:.4f} + KL {:.4f} ({:.4f})\n"""
-		print(s3.format(v_losses['total'].mean(), v_losses['cross_entropy'].mean(),
+		s4 = """  Validation loss VAE {:.4f} = cross entropy {:.4f} + KL {:.4f} ({:.4f})\n"""
+		print(s4.format(v_losses['total'].mean(), v_losses['cross_entropy'].mean(),
 						v_losses['kl'].mean(), v_losses['kl_prescale'].mean()))
 
 def create_figure(args):
@@ -136,18 +155,16 @@ def original_images(validate_dataset, args):
 
 	return image
 
-def reconstructed_images(pen_xy0, pen_xy, pen_down_log_p, args):
+def reconstructed_images(pen_xy, pen_down_log_p, args):
 
 	# create figure of reconstructed images
 	fig, axs = create_figure(args)
 	T = len(pen_xy[0][:,0])
 	for i, ax in enumerate(axs.ravel()):
 
-		ax.plot([pen_xy0[i][1], pen_xy[i][0,1]], [args.image_dim[0] - pen_xy0[i][0], args.image_dim[0] - pen_xy[i][0,0]], alpha =  float(np.exp(pen_down_log_p[i,0])), color = 'k', linewidth = 5)
-
 		for t in range(T - 1):
 
-			ax.plot(pen_xy[i][t:t + 2,1], args.image_dim[0] - pen_xy[i][t:t + 2,0], alpha =  float(np.exp(pen_down_log_p[i,t + 1])), color = 'k', linewidth = 5)
+			ax.plot(pen_xy[i][t:t + 2,1], args.image_dim[0] - pen_xy[i][t:t + 2,0], alpha =  float(np.exp(pen_down_log_p[i,t])), color = 'k', linewidth = 5)
 
 		ax.set_ylim([0, args.image_dim[0]])
 		ax.set_xlim([0, args.image_dim[1]])
@@ -165,40 +182,41 @@ def write_images_to_tensorboard(writer, output, args, validate_dataset, epoch):
 
 		writer.image("original_images", original_images(validate_dataset, args), epoch)
 
-	writer.image("reconstructed_images", reconstructed_images(output['pen_xy0'], output['pen_xy'], output['pen_down_log_p'], args), epoch)
+	writer.image("reconstructed_images", reconstructed_images(output['pen_xy'], output['pen_down_log_p'], args), epoch)
 
 def write_metrics_to_tensorboard(writer, t_losses, v_losses, epoch):
 
-	writer.scalar('loss (train)', t_losses['total'].mean(), epoch)
+	writer.scalar('VAE loss (train)', t_losses['total'].mean(), epoch)
 	writer.scalar('cross entropy (train)', t_losses['cross_entropy'].mean(), epoch)
+	writer.scalar('mse (train)', t_losses['mse'].mean(), epoch)
 	writer.scalar('KL (train)', t_losses['kl'].mean(), epoch)
 	writer.scalar('KL prescale (train)', t_losses['kl_prescale'].mean(), epoch)
-	writer.scalar('loss (validation)', v_losses['total'].mean(), epoch)
+	writer.scalar('VAE loss (validation)', v_losses['total'].mean(), epoch)
 	writer.scalar('cross entropy (validation)', v_losses['cross_entropy'].mean(), epoch)
 	writer.scalar('KL (validation)', v_losses['kl'].mean(), epoch)
 	writer.scalar('KL prescale (validation)', v_losses['kl_prescale'].mean(), epoch)
 	writer.flush()
 
-def forward_pass_model(model, params, data, args, key):
+def forward_pass_model(model_vae, params_vae, data, state_myo, args, key):
 
-	def apply_model(model, params, A, gamma, data, key):
+	def apply_model(model_vae, params_vae, data, A, gamma, state_myo, key):
 
-		return model.apply({'params': {'encoder': params['encoder']}}, data, params['decoder'], A, gamma, key)
+		return model_vae.apply({'params': {'encoder': params_vae['params']['encoder']}}, data, params_vae['decoder'], A, gamma, state_myo, key)
 
-	batch_apply_model = vmap(apply_model, in_axes = (None, None, None, None, 0, 0))
+	batch_apply_model = vmap(apply_model, in_axes = (None, None, 0, None, None, None, 0))
 
 	# construct the dynamics of each loop from the parameters
-	A, gamma = construct_dynamics_matrix(params['decoder'])
+	A, gamma = construct_dynamics_matrix(params_vae['decoder'])
 
 	# create a subkey for each example in the batch
 	batch_size = data.shape[0]
 	subkeys = random.split(key, batch_size)
 
 	# apply the model
-	output = batch_apply_model(model, params, A, gamma, data, subkeys)
+	output = batch_apply_model(model_vae, params_vae, data, A, gamma, state_myo, subkeys)
 
 	# store the original and reconstructed images in the model output
-	output['input_images'] =  original_images(data, args)
-	output['output_images'] = reconstructed_images(output['pen_xy0'], output['pen_xy'], output['pen_down_log_p'], args)
+	output['input_images'] = original_images(data, args)
+	output['output_images'] = reconstructed_images(output['pen_xy'], output['pen_down_log_p'], args)
 
 	return output

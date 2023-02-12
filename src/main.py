@@ -18,7 +18,7 @@ def main():
     # model
     parser.add_argument('--x_dim',                   default = [20, 50, 200])
     parser.add_argument('--alpha_fraction',          type = float, default = 0.1)
-    parser.add_argument('--dt',                      type = float, default = 0.01)
+    parser.add_argument('--LDS_dt',                  type = float, default = 0.01)
     parser.add_argument('--tau',                     type = float, default = 0.2)
     parser.add_argument('--time_steps',              type = float, default = 100)
     parser.add_argument('--carry_dim',               type = int, default = 200)
@@ -27,8 +27,14 @@ def main():
     parser.add_argument('--prior_z_log_var',         type = float, default = -2.0)
     parser.add_argument('--jax_seed',                type = int, default = 0)
 
+    # myosuite
+    parser.add_argument('--myosuite_environment',    default = 'myoFingerReachFixed-v0')
+    parser.add_argument('--myosuite_dt',             type = float, default = 0.02)
+    parser.add_argument('--fingertip_centre',        default = [0, 0, 0.08])
+    parser.add_argument('--fingertip_range',         default = [0.2, 0.1, 0.1])
+
     # data
-    parser.add_argument('--percent_data_to_use',     type = int, default = 1)
+    parser.add_argument('--percent_data_to_use',     type = int, default = 100)
     parser.add_argument('--fraction_for_validation', type = int, default = 1-0.025/120) # 0.2
     parser.add_argument('--batch_size',              type = int, default = 4) # 32
     parser.add_argument('--data_seed',               type = int, default = 0)
@@ -39,7 +45,7 @@ def main():
     # optimisation
     parser.add_argument('--kl_warmup_start',         type = int, default = 500)
     parser.add_argument('--kl_warmup_end',           type = int, default = 1000)
-    parser.add_argument('--kl_min',                  type = float, default = 0.1) # 0.01
+    parser.add_argument('--kl_min',                  type = float, default = 0.01) # 0.01
     parser.add_argument('--kl_max',                  type = float, default = 1.0)
     parser.add_argument('--adam_b1',                 type = float, default = 0.9)
     parser.add_argument('--adam_b2',                 type = float, default = 0.999)
@@ -56,6 +62,14 @@ def main():
 
     args = parser.parse_args()
 
+    # is lambda lax scan inefficient
+    # in evaluation, calculate loss using actual myosuite
+    # probably don't use decaying learning rate (at least not straight away - maybe after myosuite loss has converged, though this will be convergence to local model) as loss function is non stationary so will converge too early
+    # myosutie dt (0.02 is myosuite default)
+    # sigmoid on muscle inputs?
+    # be open minded about the choice of the scaling factor (and bias) on pen_state
+    # i don't bound fingertip prediction, as should be on scale of 1 and centered on zero
+
     # to change an argument via the command line: python main.py --folder_name 'run_1'
 
     # save the hyperparameters
@@ -69,22 +83,27 @@ def main():
 
     train_dataset, validate_dataset, _, _ = create_data_split(args)
 
-    # from jax.config import config
-    # config.update("jax_debug_nans", False)
+    from jax.config import config
     # config.update("jax_disable_jit", True)
+    config.update("jax_debug_nans", False)
     # type help at a breakpoint() to see available commands
     # use xeus-python kernel -- Python 3.9 (XPython) -- for debugging
 
-    models, params, args, key = initialise_model(args, train_dataset)
+    models, params, state_myo, args, key = initialise_model(args, train_dataset)
 
     # import jax
     # jax.profiler.start_trace('runs/' + folder_name)
     optimise_model(models, params, train_dataset, validate_dataset, args, key)
     # jax.profiler.stop_trace()
 
-    # # train_dataset = np.array(list(tfds.as_numpy(train_dataset))[0]['image']).reshape(args.batch_size,105,105,1)
     # from utils import forward_pass_model
-    # output = forward_pass_model(model, params, train_dataset, args, key)
+    # from jax import numpy as np
+    # import tensorflow_datasets as tfds
+    # train_dataset = np.array(list(tfds.as_numpy(train_dataset))[0]['image']).reshape(args.batch_size, 105, 105, 1)
+    # output = forward_pass_model(models[0], params[0], train_dataset, state_myo, args, key)
+    # from matplotlib import pyplot as plt
+    # plt.imshow(output['output_images'])
+    # plt.show()
 
 if __name__ == '__main__':
 

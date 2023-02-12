@@ -1,7 +1,7 @@
 from jax import random
 import jax.numpy as np
 from utils import keyGen, construct_dynamics_matrix
-from hLDS import VAE
+from hLDS import VAE, myosuite_dynamics
 from flax.core.frozen_dict import freeze, unfreeze
 from train import get_train_state
 
@@ -19,7 +19,7 @@ def initialise_decoder_parameters(args, key):
     n_layers = len(args.x_dim)
     for layer in range(n_layers):
 
-        key, subkeys = keyGen(key, n_subkeys = 7)
+        key, subkeys = keyGen(key, n_subkeys = 8)
         
         n_loops = args.n_loops[layer]
         x_dim = args.x_dim[layer]
@@ -62,10 +62,17 @@ def initialise_decoder_parameters(args, key):
             
             # weights for muscle inputs
             std_W = 1 / np.sqrt(args.x_dim[layer])
-            W_p = random.normal(next(subkeys), (5, args.x_dim[layer])) * std_W
+            W_m = random.normal(next(subkeys), (5, args.x_dim[layer])) * std_W
             
             # bias for muscle inputs
-            b_p = np.zeros((5))
+            b_m = np.zeros((5))
+
+            # weights for pen state
+            std_W = 1 / np.sqrt(3)
+            W_p = random.normal(next(subkeys), (3, 3)) * std_W
+            
+            # bias for pen state
+            b_p = np.zeros((3))
             
         # coefficient for interpolating between loop dynamics and the dynamics of a negative identity matrix 
         # this shifts the real part of the eigenvalues of the dynamics matrix to the left (for numerical stability)
@@ -78,6 +85,8 @@ def initialise_decoder_parameters(args, key):
             'W_u': W_u,
             'W_a': W_a, 
             'b_a': b_a,
+            'W_m': W_m,
+            'b_m': b_m,
             'W_p': W_p,
             'b_p': b_p,
             'gamma': gamma,
@@ -96,21 +105,21 @@ def initialise_model(args, train_dataset):
     args.n_loops = [int(np.ceil(i * args.alpha_fraction)) for i in args.x_dim]
 
     # define the myosuite dynamics model and initialise its parameters
-    model_myo = myosuite_dynamics(carry_dim = args.carry_dim)
-    params_myo = model_myo.init(carry = None, inputs = np.ones((5,)), rngs = {'params': random.PRNGKey(0)})
+    model_myo = myosuite_dynamics(carry_dim = args.carry_dim, fingertip_centre = args.fingertip_centre, fingertip_range = args.fingertip_range)
+    params_myo = model_myo.init(carry = np.ones((args.carry_dim,)), inputs = np.ones((5,)), rngs = {'params': random.PRNGKey(0)})
     
     # define the VAE model and initialise its parameters
-    model_vae = VAE(n_loops_top_layer = args.n_loops[0], x_dim = args.x_dim, image_dim = args.image_dim, T = args.time_steps, dt = args.dt, tau = args.tau)
+    model_vae = VAE(n_loops_top_layer = args.n_loops[0], x_dim = args.x_dim, image_dim = args.image_dim, T = args.time_steps, dt = args.LDS_dt, tau = args.tau)
     params = {'prior_z_log_var': args.prior_z_log_var,
               'decoder': initialise_decoder_parameters(args, next(subkeys))}
     A, gamma = construct_dynamics_matrix(params['decoder'])
-    params_vae = model_vae.init(data = np.ones((args.image_dim[0], args.image_dim[1])), params = params['decoder'], A = A,
-                                gamma = gamma, state_myo = get_train_state(model_myo, params_myo, args), key = next(subkeys), 
-                                rngs = {'params': random.PRNGKey(0)})['params']
+    state_myo, _ = get_train_state(([], model_myo), ([], params_myo), args, 'myosuite')
+    params_vae = model_vae.init(data = np.ones((args.image_dim[0], args.image_dim[1])), params = params['decoder'],
+                                A = A, gamma = gamma, state_myo = state_myo, key = next(subkeys), rngs = {'params': random.PRNGKey(0)})
 
     # concatenate all of the VAE parameters into a single dictionary
     params_vae = unfreeze(params_vae)
     params_vae = params_vae | params
     params_vae = freeze(params_vae)
 
-    return (model_vae, model_myo), (params_vae, params_myo), args, key
+    return (model_vae, model_myo), (params_vae, params_myo), state_myo, args, key
