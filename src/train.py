@@ -16,7 +16,7 @@ from jax import lax
 def kl_scheduler(args):
     
     kl_schedule = []
-    for i_batch in range(int(args.n_batches * args.n_epochs)):
+    for i_batch in range(int(args.n_batches_train * args.n_epochs)):
         
         warm_up_fraction = min(max((i_batch - args.kl_warmup_start) / (args.kl_warmup_end - args.kl_warmup_start), 0), 1)
         
@@ -141,16 +141,16 @@ def optimise_model(model, params, train_dataset, validate_dataset, args, key):
 
     # create schedule for KL divergence weight
     kl_schedule = kl_scheduler(args)
-    
+
     # create train state
     state, lr_scheduler = get_train_state(model, params, args)
-    
+
     # set early stopping criteria
     early_stop = EarlyStopping(min_delta = args.min_delta, patience = args.patience)
 
     # create tensorboard writer
     writer = create_tensorboard_writer(args)
-    
+
     # loop over epochs
     for epoch in range(args.n_epochs):
         
@@ -162,14 +162,14 @@ def optimise_model(model, params, train_dataset, validate_dataset, args, key):
         train_datagen = iter(tfds.as_numpy(train_dataset))
 
         # generate subkeys
-        key, training_subkeys = keyGen(key, n_subkeys = args.n_batches)
+        key, training_subkeys = keyGen(key, n_subkeys = args.n_batches_train)
 
         # initialise the losses and the timer
         training_losses = {'total': 0, 'cross_entropy': 0, 'kl': 0, 'kl_prescale': 0}
         batch_start_time = time.time()
 
         # loop over batches
-        for batch in range(1, args.n_batches + 1):
+        for batch in range(1, args.n_batches_train + 1):
 
             kl_weight = np.array(next(kl_schedule))
 
@@ -201,26 +201,51 @@ def optimise_model(model, params, train_dataset, validate_dataset, args, key):
                 batch_start_time = time.time()
 
         # calculate loss on validation data
-        key, validation_subkeys = keyGen(key, n_subkeys = 1)
-        _, (validation_losses, output) = eval_step_jit(state.params, state, validate_dataset, kl_weight, next(validation_subkeys))
+        validate_datagen = iter(tfds.as_numpy(validate_dataset))
+
+        # generate subkeys
+        key, validate_subkeys = keyGen(key, n_subkeys = args.n_batches_validate)
+
+        # initialise the losses
+        validate_losses = {'total': 0, 'cross_entropy': 0, 'kl': 0, 'kl_prescale': 0}
+
+        # loop over batches
+        for batch in range(1, args.n_batches_validate + 1):
+
+            v_data = np.array(next(validate_datagen)['image'])
+
+            _, (all_losses, output) = eval_step_jit(state.params, state, v_data, kl_weight, next(validate_subkeys))
+
+            # store validate losses
+            validate_losses = tree_map(lambda x, y: x + y / args.n_batches_validate, validate_losses, all_losses)
+
+        # calculate loss on validation data
+        # key, validation_subkeys = keyGen(key, n_subkeys = 1)
+        # _, (validation_losses, output) = eval_step_jit(state.params, state, validate_dataset, kl_weight, next(validation_subkeys))
             
         # end epoch timer
         epoch_duration = time.time() - epoch_start_time
-            
+
         # print losses (mean over all batches in epoch)
-        print_metrics("epoch", epoch_duration, t_losses_thru_training, validation_losses, epoch = epoch + 1)
+        # print_metrics("epoch", epoch_duration, t_losses_thru_training, validation_losses, epoch = epoch + 1)
+        print_metrics("epoch", epoch_duration, t_losses_thru_training, validate_losses, epoch = epoch + 1)
 
-        # write images to tensorboard
-        write_images_to_tensorboard(writer, output, args, validate_dataset, epoch)
+        if epoch % args.checkpoint_every == 0:
 
-        # write metrics to tensorboard
-        write_metrics_to_tensorboard(writer, t_losses_thru_training, validation_losses, epoch)
-            
-        # save checkpoint
-        checkpoints.save_checkpoint(ckpt_dir = 'runs/' + args.folder_name, target = state, step = epoch)
+            # write images to tensorboard
+            # write_images_to_tensorboard(writer, output, args, validate_dataset, epoch)
+            write_images_to_tensorboard(writer, output, args, v_data, epoch)
+
+            # write metrics to tensorboard
+            # write_metrics_to_tensorboard(writer, t_losses_thru_training, validation_losses, epoch)
+            write_metrics_to_tensorboard(writer, t_losses_thru_training, validate_losses, epoch)
+                
+            # save checkpoint
+            checkpoints.save_checkpoint(ckpt_dir = 'runs/' + args.folder_name, target = state, step = epoch)
         
         # if early stopping criteria met, break
-        _, early_stop = early_stop.update(validation_losses['total'].mean())
+        # _, early_stop = early_stop.update(validation_losses['total'].mean())
+        _, early_stop = early_stop.update(validate_losses['total'].mean())
         if early_stop.should_stop:
                 
             print('Early stopping criteria met, breaking...')

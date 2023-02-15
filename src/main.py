@@ -2,6 +2,9 @@ import argparse
 import pickle
 import os
 
+# os.environ['XLA_PYTHON_CLIENT_MEM_FRACTION'] = '.50'
+os.environ['XLA_PYTHON_CLIENT_PREALLOCATE'] = 'false'
+
 from load_data import create_data_split
 from initialise import initialise_model
 from train import optimise_model
@@ -16,7 +19,7 @@ def main():
     parser.add_argument('--reload_folder_name',      default = 'saved_model')
 
     # model
-    parser.add_argument('--x_dim',                   default = [20, 50, 200])
+    parser.add_argument('--x_dim',                   default = [20, 40, 80]) # 20, 50, 200
     parser.add_argument('--alpha_fraction',          type = float, default = 0.1)
     parser.add_argument('--dt',                      type = float, default = 0.01)
     parser.add_argument('--tau',                     type = float, default = 0.2)
@@ -29,7 +32,8 @@ def main():
     # data
     parser.add_argument('--percent_data_to_use',     type = int, default = 100)
     parser.add_argument('--fraction_for_validation', type = int, default = 0.1) # 1-0.025/120 for 4 when percent_data_to_use is 1
-    parser.add_argument('--batch_size',              type = int, default = 32)
+    parser.add_argument('--batch_size_train',        type = int, default = 32)
+    parser.add_argument('--batch_size_validate',     type = int, default = 32)
     parser.add_argument('--data_seed',               type = int, default = 0)
 
     # images to write to tensorboard
@@ -48,14 +52,15 @@ def main():
     parser.add_argument('--step_size',               type = float, default = 0.001)
     parser.add_argument('--decay_steps',             type = int, default = 1)
     parser.add_argument('--decay_factor',            type = float, default = 0.9999)
-    parser.add_argument('--print_every',             type = int, default = 50)
-    parser.add_argument('--n_epochs',                type = int, default = 1e16)
+    parser.add_argument('--print_every',             type = int, default = 250)
+    parser.add_argument('--checkpoint_every',        type = int, default = 10)
+    parser.add_argument('--n_epochs',                type = int, default = 1000)
     parser.add_argument('--min_delta',               type = float, default = 1e-3)
     parser.add_argument('--patience',                type = int, default = 2)
 
     args = parser.parse_args()
 
-    # to change an argument via the command line: python main.py --folder_name 'run_1'
+    # to change an argument via the command line: python -u main.py --folder_name 'run_1' # -u flushes print
 
     # save the hyperparameters
     path = 'runs/' + args.folder_name + '/hyperparameters'
@@ -72,14 +77,17 @@ def main():
     # type help at a breakpoint() to see available commands
     # use xeus-python kernel -- Python 3.9 (XPython) -- for debugging
 
-    model, params, args, key = initialise_model(args, train_dataset)
+    import jax
+    print(jax.devices())
+
+    model, params, args, key = initialise_model(args, train_dataset, validate_dataset)
 
     # import jax
     # jax.profiler.start_trace('runs/' + folder_name)
     state = optimise_model(model, params, train_dataset, validate_dataset, args, key)
     # jax.profiler.stop_trace()
 
-    # # train_dataset = np.array(list(tfds.as_numpy(train_dataset))[0]['image']).reshape(args.batch_size,105,105,1)
+    # # train_dataset = np.array(list(tfds.as_numpy(train_dataset))[0]['image']).reshape(args.batch_size_train,105,105,1)
     # from utils import forward_pass_model
     # output = forward_pass_model(model, params, train_dataset, args, key)
 

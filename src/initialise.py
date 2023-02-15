@@ -82,15 +82,16 @@ def initialise_decoder_parameters(args, key):
             'gamma': gamma,
             'pen_log_var': args.init_pen_log_var}
 
-def initialise_model(args, train_dataset):
+def initialise_model(args, train_dataset, validate_dataset):
 
     # explicitly generate a PRNG key
     key = random.PRNGKey(args.jax_seed)
 
     # generate the required number of subkeys
-    key, subkeys = keyGen(key, n_subkeys = 2) 
+    key, subkeys = keyGen(key, n_subkeys = 3) 
 
-    args.n_batches = len(train_dataset)
+    args.n_batches_train = len(train_dataset)
+    args.n_batches_validate = len(validate_dataset)
     args.n_loops = [int(np.ceil(i * args.alpha_fraction)) for i in args.x_dim]
 
     # define the model
@@ -101,7 +102,7 @@ def initialise_model(args, train_dataset):
               'decoder': initialise_decoder_parameters(args, next(subkeys))}
     A, gamma = construct_dynamics_matrix(params['decoder'])
     init_params = model.init(data = np.ones((args.image_dim[0], args.image_dim[1])), params = params['decoder'], A = A,
-                             gamma = gamma, key = next(subkeys), rngs = {'params': random.PRNGKey(0)})['params']
+                             gamma = gamma, key = next(subkeys), rngs = {'params': next(subkeys)})['params']
 
     # concatenate all parameters into a single dictionary
     init_params = unfreeze(init_params)
