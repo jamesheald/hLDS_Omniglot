@@ -15,15 +15,16 @@ def main():
 
     # directories
     parser.add_argument('--folder_name',             default = 'to_save_model')
+    parser.add_argument('--n_best_checkpoints',      type = int, default = 3)
     parser.add_argument('--reload_state',            type = bool, default = False)
     parser.add_argument('--reload_folder_name',      default = 'saved_model')
 
     # model
-    parser.add_argument('--x_dim',                   default = [20, 40, 80]) # 20, 50, 200
+    parser.add_argument('--x_dim',                   default = [20, 200]) # 20, 50, 200; 20, 40, 80; 100, 200, 300
     parser.add_argument('--alpha_fraction',          type = float, default = 0.1)
     parser.add_argument('--dt',                      type = float, default = 0.01)
     parser.add_argument('--tau',                     type = float, default = 0.2)
-    parser.add_argument('--time_steps',              type = float, default = 100)
+    parser.add_argument('--time_steps',              type = int, default = 100)
     parser.add_argument('--init_pen_log_var',        type = float, default = 10.0) # 5.7 correponds to 3 SD = 105/2 (canvas half width)
     parser.add_argument('--image_dim',               default = [105, 105])
     parser.add_argument('--prior_z_log_var',         type = float, default = -2.0)

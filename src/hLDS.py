@@ -16,11 +16,11 @@ class encoder(nn.Module):
         x = nn.relu(x)
         x = nn.Conv(features = 32, kernel_size = (5, 5))(x)
         x = nn.relu(x)
-        x = nn.Conv(features = 32, kernel_size = (5, 5))(x)
-        x = nn.relu(x)
+        # x = nn.Conv(features = 32, kernel_size = (5, 5))(x)
+        # x = nn.relu(x)
         x = x.reshape((x.shape[0], -1)) # flatten
-        x = nn.Dense(features = 64)(x)
-        x = nn.relu(x)
+        # x = nn.Dense(features = 64)(x)
+        # x = nn.relu(x)
         x = nn.Dense(features = 40)(x)
         x = nn.relu(x)
         x = nn.Dense(features = 40)(x)
@@ -153,10 +153,10 @@ class decoder(nn.Module):
             top_layer_alphas = inputs
 
             # compute the alphas
-            alphas = [np.squeeze(top_layer_alphas), *tree_map(compute_alphas, params['W_a'], x[:2], params['b_a'])]
+            alphas = [np.squeeze(top_layer_alphas), *tree_map(compute_alphas, params['W_a'], x[:-1], params['b_a'])]
 
             # compute the additive inputs
-            u = [np.zeros(x[0].shape), *tree_map(compute_inputs, params['W_u'], x[:2])]
+            u = [np.zeros(x[0].shape), *tree_map(compute_inputs, params['W_u'], x[:-1])]
 
             # update the states
             x_new = tree_map(update_state, A, gamma, x, alphas, u)

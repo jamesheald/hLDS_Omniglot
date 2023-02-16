@@ -5,6 +5,7 @@ from jax.tree_util import tree_map
 from moviepy.video.io.bindings import mplfig_to_npimage
 from skimage import color
 import matplotlib.pyplot as plt
+from flax.training import checkpoints
 
 def construct_dynamics_matrix(params):
 
@@ -150,6 +151,20 @@ def write_metrics_to_tensorboard(writer, t_losses, v_losses, epoch):
 	writer.scalar('KL (validation)', v_losses['kl'].mean(), epoch)
 	writer.scalar('KL prescale (validation)', v_losses['kl_prescale'].mean(), epoch)
 	writer.flush()
+
+def save_best_checkpoints(state, args, epoch, validate_loss, best_validate_losses):
+
+	# check to see if the current validation loss is better than the worst of the best validation losses
+	if validate_loss < np.max(best_validate_losses):
+
+		# replace the worst of the best validation losses with the current validation loss
+		idx_checkpoint_to_replace = np.argmax(best_validate_losses)
+		best_validate_losses[idx_checkpoint_to_replace] = validate_loss
+
+		# save a checkpoint
+		checkpoints.save_checkpoint(ckpt_dir = 'runs/' + args.folder_name + '/' + str(idx_checkpoint_to_replace), target = state, step = epoch)
+
+	return best_validate_losses
 
 def forward_pass_model(model, params, data, args, key):
 

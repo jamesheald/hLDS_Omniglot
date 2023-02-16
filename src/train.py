@@ -1,11 +1,12 @@
 from jax import random, value_and_grad, vmap, jit
 import jax.numpy as np
+import numpy as onp
 from jax.tree_util import tree_map
 import optax
-from flax.training import checkpoints, train_state
+from flax.training import train_state #, checkpoints
 from flax.training.early_stopping import EarlyStopping
 import tensorflow_datasets as tfds
-from utils import keyGen, stabilise_variance, smooth_maximum, print_metrics, write_images_to_tensorboard, write_metrics_to_tensorboard
+from utils import keyGen, stabilise_variance, smooth_maximum, print_metrics, write_images_to_tensorboard, write_metrics_to_tensorboard, save_best_checkpoints
 from initialise import construct_dynamics_matrix
 from flax.metrics import tensorboard
 import time
@@ -151,6 +152,9 @@ def optimise_model(model, params, train_dataset, validate_dataset, args, key):
     # create tensorboard writer
     writer = create_tensorboard_writer(args)
 
+    # initialise the validate losses for the n best checkpoints (initialise to infinite values that will be easily bettered/overwritten)
+    best_validate_losses = onp.ones((args.n_best_checkpoints)) * np.inf
+
     # loop over epochs
     for epoch in range(args.n_epochs):
         
@@ -164,7 +168,7 @@ def optimise_model(model, params, train_dataset, validate_dataset, args, key):
         # generate subkeys
         key, training_subkeys = keyGen(key, n_subkeys = args.n_batches_train)
 
-        # initialise the losses and the timer
+        # initialise the training losses and the timer
         training_losses = {'total': 0, 'cross_entropy': 0, 'kl': 0, 'kl_prescale': 0}
         batch_start_time = time.time()
 
@@ -241,16 +245,18 @@ def optimise_model(model, params, train_dataset, validate_dataset, args, key):
             write_metrics_to_tensorboard(writer, t_losses_thru_training, validate_losses, epoch)
                 
             # save checkpoint
-            checkpoints.save_checkpoint(ckpt_dir = 'runs/' + args.folder_name, target = state, step = epoch)
+            # checkpoints.save_checkpoint(ckpt_dir = 'runs/' + args.folder_name, target = state, step = epoch)
         
+        best_validate_losses = save_best_checkpoints(state, args, epoch, validate_losses['total'], best_validate_losses)
+
         # if early stopping criteria met, break
         # _, early_stop = early_stop.update(validation_losses['total'].mean())
-        _, early_stop = early_stop.update(validate_losses['total'].mean())
-        if early_stop.should_stop:
-                
-            print('Early stopping criteria met, breaking...')
-                
-            break
+        #_, early_stop = early_stop.update(validate_losses['total'].mean())
+        #if early_stop.should_stop:
+        #        
+        #    print('Early stopping criteria met, breaking...')
+        #        
+        #    break
 
     optimisation_duration = time.time() - optimisation_start_time
 
